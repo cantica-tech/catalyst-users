@@ -1,0 +1,11 @@
+# catalyst project file: names this project's criterion ($HOME/.catalyst/projects/<project_name>/criterion). Never a path.
+project_name = "catalyst-users"
+format = "1.0-rc"
+kernel_version = "0.104.1"
+module = "software-engineering"
+agent = "claude-code"
+repoed = false
+created_by = "Olivier Steck"
+created = "2026-10-22"
+updated = "2026-10-22"
+journal_since = ""
