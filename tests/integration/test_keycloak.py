@@ -1,0 +1,107 @@
+"""End to end against the local Keycloak (env-LOCAL-000001)."""
+
+from __future__ import annotations
+
+import secrets
+import threading
+
+import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+
+from catalyst_users.admin import KeycloakAdmin
+from catalyst_users.credentials import CredentialStore
+from catalyst_users.errors import AdminError, OIDCError
+from catalyst_users.fastapi_auth import KeycloakAuth
+from catalyst_users.identity import Identity
+from catalyst_users.oidc import OIDCClient
+from catalyst_users.session import Session
+from tests.integration.conftest import approve_device, password_token
+
+
+@pytest.fixture
+def oidc(settings):
+    return OIDCClient(settings)
+
+
+def test_device_login_whoami_refresh_logout(oidc, settings):
+    session = Session(oidc, CredentialStore())
+    shown = []
+
+    def show(code):
+        shown.append(code)
+        threading.Thread(target=approve_device, args=(code, "alice"), daemon=True).start()
+
+    who = session.login(show)
+    assert shown and shown[0].user_code
+    assert who.username == "alice" and who.issuer == settings.issuer
+    assert who.in_group("/cantica-tech") and who.has_role("stakeholder")  # inherited from the parent group
+
+    stored = session.store.load(settings.issuer, settings.client_id)
+    refreshed = oidc.refresh(stored)
+    assert refreshed.access_token != stored.access_token
+
+    assert session.logout() is None
+    assert not session.store.path.exists()
+    with pytest.raises(OIDCError):  # the revoked refresh token no longer works
+        oidc.refresh(stored)
+
+
+def test_introspection_accepts_a_real_token_for_the_api(oidc):
+    claims = oidc.introspect(password_token("bob"))
+    assert oidc.accepts(claims)
+    who = Identity.from_claims(claims)
+    assert who.in_group("/cantica-tech/catalyst") and who.has_role("release-manager")
+
+
+def test_introspection_rejects_garbage(oidc):
+    assert not oidc.accepts(oidc.introspect("not-a-token"))
+
+
+def test_directory_changes_with_an_admins_own_token(settings):
+    admin = KeycloakAdmin(settings, lambda: password_token("ada"))
+    suffix = secrets.token_hex(3)
+    username, path = f"it-user-{suffix}", f"/it-{suffix}/team"
+
+    group = admin.create_group(path)
+    assert group.path == path and admin.group(f"/it-{suffix}").path == f"/it-{suffix}"
+    admin.create_user(username, email=f"{username}@example.invalid", first_name="It", last_name="User")
+    admin.add_member(path, username)
+    assert admin.members(path) == [username]
+    admin.grant_role_to_group(f"/it-{suffix}", "qa")
+    assert "qa" in admin.group(f"/it-{suffix}").roles
+    assert [g.path for g in admin.groups() if g.path.startswith(f"/it-{suffix}")] == [f"/it-{suffix}", path]
+    assert admin.user_groups(username) == [path]
+
+    assert admin.set_enabled(username, False).enabled is False
+    assert admin.set_enabled(username, True).enabled is True
+    admin.remove_member(path, username)
+    assert admin.members(path) == []
+
+
+def test_a_non_admin_cannot_change_the_directory(settings):
+    admin = KeycloakAdmin(settings, lambda: password_token("alice"))
+    with pytest.raises(AdminError, match="not allowed"):
+        admin.create_role(f"it-role-{secrets.token_hex(3)}")
+
+
+def test_fastapi_with_real_tokens(settings):
+    auth = KeycloakAuth(settings)
+    app = FastAPI()
+
+    @app.get("/release", dependencies=[Depends(auth.require_roles("release-manager"))])
+    def release():
+        return {"ok": True}
+
+    in_catalyst = auth.require_groups("/cantica-tech/catalyst")
+
+    @app.get("/catalyst")
+    def catalyst(who: Identity = Depends(in_catalyst)):
+        return who.signer()
+
+    client = TestClient(app)
+    bob, alice = password_token("bob"), password_token("alice")
+    assert client.get("/release", headers={"Authorization": f"Bearer {bob}"}).status_code == 200
+    assert client.get("/release", headers={"Authorization": f"Bearer {alice}"}).status_code == 403
+    assert client.get("/catalyst", headers={"Authorization": f"Bearer {alice}"}).json()["username"] == "alice"
+    assert client.get("/catalyst", headers={"Authorization": "Bearer forged"}).status_code == 401
