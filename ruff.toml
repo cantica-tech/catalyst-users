@@ -1,0 +1,11 @@
+# Ruff: the cantica-tech standard (.standards/, synced — never edit there) plus this repository's own settings.
+extend = ".standards/ruff.toml"
+src = ["src", "tests"]
+
+[lint.per-file-ignores]
+# the standard's test patterns resolve under .standards/; restate them for this repository's tests/
+"tests/**" = ["S101", "S105", "S106", "S107", "S108"]
+
+[lint.flake8-bugbear]
+# FastAPI declares dependencies as argument defaults
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security"]

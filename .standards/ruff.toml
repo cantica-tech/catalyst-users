@@ -1,0 +1,40 @@
+# cantica-tech Python standard (Ruff lint + format). Synced into a repository as
+# `.standards/ruff.toml`; the repository's own `ruff.toml` says `extend = ".standards/ruff.toml"`
+# and adds only its ratchet. Edit here, never in a consumer.
+target-version = "py311"
+line-length = 120
+
+[format]
+quote-style = "double"
+docstring-code-format = true
+
+[lint]
+select = [
+  "E", "W",    # pycodestyle
+  "F",         # Pyflakes
+  "I",         # import order
+  "B",         # bugbear
+  "UP",        # pyupgrade
+  "SIM",       # simplify
+  "C4",        # comprehensions
+  "PTH",       # pathlib over os.path
+  "RUF",       # Ruff's own
+  "PL",        # Pylint subset
+  "S",         # Bandit (security)
+  "N",         # naming
+]
+ignore = [
+  "E501",      # line length: the formatter's job
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",   # complexity counts: reviewed, not gated
+  "PLR2004",   # magic values: reviewed, not gated
+  "PLC0415",   # import inside a function: deliberate in CLIs (start-up time, optional dependencies)
+  "S603", "S607",   # subprocess with a list / a PATH binary (git, task): intended in CLIs
+]
+
+[lint.per-file-ignores]
+# patterns are relative to this file's directory (.standards/ in a consumer): hence the leading **/
+"**/tests/**" = ["S101", "S108", "S105", "S106"]   # asserts, temp paths, fake secrets
+"**/test_*.py" = ["S101", "S108", "S105", "S106"]
+
+[lint.isort]
+combine-as-imports = true

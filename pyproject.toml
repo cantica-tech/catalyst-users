@@ -1,0 +1,32 @@
+[project]
+name = "catalyst-users"
+version = "0.1.0"
+description = "Users, groups and roles from Keycloak over standard OIDC: a stdlib-only core, a simple CLI and a FastAPI integration"
+readme = "README.md"
+authors = [
+    { name = "Olivier Steck", email = "osteck@gmail.com" }
+]
+requires-python = ">=3.11"
+# The core is standard-library only (env-RUNTIME-000002): stage two vendors it into catalyst's zipapp.
+dependencies = []
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.115"]
+
+[project.scripts]
+catalyst-users = "catalyst_users.cli:main"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.16.0",
+    "pytest>=8",
+    "ruff>=0.7",
+    "uvicorn>=0.30",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

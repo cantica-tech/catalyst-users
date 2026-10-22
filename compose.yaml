@@ -1,0 +1,15 @@
+# Local identity provider for development and integration tests (env-LOCAL-000001).
+# DEV ONLY: the admin password below and everything in keycloak/realm-catalyst.json
+# are development credentials, reachable on the loopback address only.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: dev-only-admin-password
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./keycloak/realm-catalyst.json:/opt/keycloak/data/import/realm-catalyst.json:ro
