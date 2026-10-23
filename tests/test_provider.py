@@ -68,18 +68,20 @@ def test_the_keycloak_provider_reads_userinfo(settings, transport, tmp_path):
     store = tmp_path / "creds.json"
     CredentialStore(store).save(ISSUER, "catalyst-cli", Tokens("at", "rt", time.time() + 300))
     transport.on("GET", f"{OIDC}/userinfo", reply(body=CLAIMS))
-    who = KeycloakProvider(ISSUER, store=store, transport=transport).whoami()
+    who = KeycloakProvider(ISSUER, credentials=store, transport=transport).whoami()
     assert who.grants == ("cmd:create", "cmd:freeze", "reconcile:full", "reconcile:propose")
     with pytest.raises(ProviderError, match="not alice"):
-        KeycloakProvider(ISSUER, store=store, transport=transport).whoami("alice")
+        KeycloakProvider(ISSUER, credentials=store, transport=transport).whoami("alice")
 
 
 def test_the_pointer_chooses_the_backend(monkeypatch):
     monkeypatch.delenv(STATIC_FLAG, raising=False)
     kc = from_pointer({"provider": "keycloak", "issuer": ISSUER})
     assert isinstance(kc, KeycloakProvider) and kc.catalyst_client == "catalyst" and kc.client == "catalyst-cli"
-    with pytest.raises(ProviderError, match="needs an"):
+    with pytest.raises(ProviderError, match='needs a "url"'):
         from_pointer({"provider": "keycloak"})
+    by_url = from_pointer({"provider": "keycloak", "url": "https://id.example.com/", "realm": "catalyst"})
+    assert by_url.issuer == ISSUER
     with pytest.raises(ProviderError, match="unknown provider"):
         from_pointer({"provider": "ldap"})
     with pytest.raises(ProviderError, match="tests only"):

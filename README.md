@@ -16,30 +16,32 @@ library so that catalyst's single-file CLI can carry it.
 ```sh
 uv sync --all-extras                 # Python 3.11+, the fastapi extra and the dev tools
 docker compose up -d                 # Keycloak 26.4.0 on 127.0.0.1:8080, realm "catalyst"
-export CATALYST_USERS_SERVER=http://127.0.0.1:8080
 
-uv run catalyst-users login          # open the link, sign in (alice / dev-only-alice-password), grant access
-uv run catalyst-users whoami
+uv run catalyst-users setup          # asks for the provider, its settings, the admin and their password
+uv run catalyst-users whoami --system
 ```
 
+`setup` ([below](#setup)) writes `~/.catalyst-users/IAM/settings.json`; until it exists, a command asks for it in a
+terminal and refuses otherwise.
+
 The realm in [keycloak/realm-catalyst.json](keycloak/realm-catalyst.json)
-is **for development only**. It seeds Keycloak's first start: three users
-(`alice`, `bob`, `ada`; each password is `dev-only-<name>-password`), a
-nested group tree, and roles that mirror catalyst's:
+is **for development only**. It holds the realm, a nested group tree, roles that mirror catalyst's, and the clients,
+and **no person and no secret** (`id-PROVIDER-000007`); Keycloak generates the confidential clients' secrets:
 
 ```text
-cantica-tech            [stakeholder]                  ada
+cantica-tech            [stakeholder]
   catalyst
-    developers          [developer]                    alice
-    maintainers         [release-manager, tech-lead]   bob
-catalyst-admins         [catalyst-admin, realm-admin]  (the owner, below)
+    developers          [developer]
+    maintainers         [release-manager, tech-lead]
+catalyst-admins         [catalyst-admin, realm-admin]  (the admin setup creates, or set_admin.py)
 ```
 
 Keycloak keeps its database in `.keycloack/` on the host (never in git), so
 users and changes survive `docker compose up -d --force-recreate`; delete
-that directory to start again from the realm file.
+that directory to start again from the realm file. A client added to the realm file later reaches a running realm
+with `uv run python keycloak/sync_clients.py`, which adds what it lacks and changes nothing else.
 
-The realm's admin is you, never a dev user. `keycloak/set_admin.py` reads your
+On a realm imported by compose, `keycloak/set_admin.py` makes you its admin: it reads your
 username and password from the macOS keychain (the item whose service is
 `osteck@catalyst-users`, or `--service`), creates or updates you in the realm,
 and makes you the only member of `catalyst-admins`. Nothing it reads is
@@ -109,19 +111,37 @@ class AcmeProvider:
     # system_token, system_whoami
 ```
 
+## Setup
+
+`catalyst-users setup` asks for (or takes as options): the provider's registered name (`--type`), its settings as JSON
+(`--provider`, a file or JSON), the admin's username (`--username`), and their password or a command printing it
+(`--password-command`). The provider then checks itself (`id-PROVIDER-000006`):
+
+| The provider | Setup |
+| --- | --- |
+| not up | writes the settings from the JSON alone, unchecked |
+| up, without its realm | creates the realm from the JSON's `definition`, as the provider's server admin (asked for, used once, never stored), then the admin (email and names asked for: Keycloak signs no one in without them) in `/catalyst-admins`, and signs them in |
+| up, with its realm | signs the admin in, and nothing else |
+
+A refused sign-in writes nothing. Keycloak's JSON:
+
+```json
+{"url": "http://localhost:8080", "realm": "catalyst", "definition": "keycloak/realm-catalyst.json"}
+```
+
+`definition` (a path, or the realm itself) is used only to create the realm, and refused if it holds a person or a
+secret. `~/.catalyst-users/IAM/settings.json` (`0600`, in a `0700` directory) then holds the type, the username, the
+connection settings and the password command, never a secret. A typed password goes into the OS keychain (macOS
+`security`, else `secret-tool`), and the command that reads it is stored. `--force` replaces existing settings.
+
 ## The local system account
 
-The account a client such as catalyst uses locally, on the system's behalf, is a machine identity, never a person
-(`id-AUTH-000006`). `catalyst-users token --system` prints its access token, and `whoami --system` says who it is.
-Keycloak's is the service account of the confidential client `catalyst-system` (client credentials grant). Its secret
-is the first line `secret_command` prints, run without a shell. It is never stored or printed.
-
-On the dev realm, `keycloak/set_system_client.py` creates the client from `keycloak/realm-catalyst.json` and keeps the
-secret Keycloak generated in the keychain (`env-LOCAL-000003`):
-
-```sh
-uv run python keycloak/set_system_client.py [--role catalyst-admin]   # roles for its service account
-```
+The account a client such as catalyst uses locally, on the system's behalf, is setup's admin (`id-AUTH-000006`).
+`catalyst-users token --system` prints its access token, and `whoami --system` says who it is, each signing it in
+with the username and the first line the password command prints, run without a shell. Keycloak signs it in with the
+password grant on `catalyst-admin-cli`, a public client of the realm whose only flow is that grant, and whose tokens
+carry the groups, roles, catalyst grants and API audience. Keycloak's built-in `admin-cli` would check the password
+but carries none of them. A person who is not the admin still logs in with the device grant.
 
 ## The facade, and catalyst's grants
 
@@ -183,18 +203,18 @@ A runnable example is in [examples/api.py](examples/api.py).
 
 ## Configuration
 
-The provider is chosen by a pointer: `--pointer FILE` (JSON) or `CATALYST_USERS_POINTER`, else `config.toml`'s
-`provider` with its table, else the local dev Keycloak.
+The provider is chosen by a pointer: `--pointer FILE` (JSON) or `CATALYST_USERS_POINTER`, else
+`~/.catalyst-users/IAM/settings.json` ([setup](#setup)), else `config.toml`'s `provider` with its table, else explicit
+Keycloak settings (flags or environment). With none of them, a command asks for setup.
 
-```toml
-# ~/.catalyst-users/config.toml
-provider = "keycloak"
-
-[keycloak]
-issuer = "http://localhost:8080/realms/catalyst"
-client = "catalyst-cli"
-system_client = "catalyst-system"
-secret_command = "security find-generic-password -s catalyst-system@catalyst-users -w"
+```json
+{
+  "type": "keycloak",
+  "username": "owner",
+  "provider": {"url": "http://localhost:8080", "realm": "catalyst", "client": "catalyst-cli",
+               "password_client": "catalyst-admin-cli", "catalyst_client": "catalyst"},
+  "password_command": "security find-generic-password -s catalyst-users -a owner@http://localhost:8080/catalyst -w"
+}
 ```
 
 Keycloak's settings also come from (lowest precedence first): built-in defaults, then
@@ -259,7 +279,7 @@ request:
 | --- | --- |
 | `src/catalyst_users/` | `config`, `http`, `oidc`, `identity`, `credentials`, `session`, `admin`, `provider` (the facade and its registry), `providers/` (the built-in providers), `cli` (stdlib only) and `fastapi_auth` (the `fastapi` extra) |
 | `tests/` | Unit tests with a fake transport; `tests/integration/` runs against Keycloak |
-| `keycloak/realm-catalyst.json` | The dev realm: clients, mappers, roles, groups, users |
+| `keycloak/realm-catalyst.json` | The dev realm: clients, mappers, roles and groups; no person, no secret |
 | `compose.yaml` | The pinned local Keycloak |
 | `examples/api.py` | An example protected service |
 | `docs/` | Research and decisions |

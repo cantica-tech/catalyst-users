@@ -173,15 +173,20 @@ class OIDCClient:
 
     # --- tokens (id-AUTH-000003) ---------------------------------------------
 
-    # --- the local system account (id-AUTH-000006) -----------------------------
+    # --- the local admin account (id-AUTH-000006, id-PROVIDER-000006) ----------
 
-    def client_credentials(self, client_id: str, secret: str, scope: str = "openid") -> Tokens:
-        """A token for a confidential client's own service account; the secret travels only in this request."""
+    def password_grant(self, client_id: str, username: str, password: str, scope: str = "openid") -> Tokens:
+        """Tokens for the local admin account; its password travels only in this request (id-AUTH-000001)."""
         resp = self.http.request(
             "POST",
             self.endpoints.token,
-            form={"grant_type": "client_credentials", "scope": scope},
-            basic=(client_id, secret),
+            form={
+                "grant_type": "password",
+                "client_id": client_id,
+                "username": username,
+                "password": password,
+                "scope": scope,
+            },
         )
         if not resp.ok:
             raise _error(resp)

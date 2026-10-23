@@ -1,82 +1,147 @@
-"""The Keycloak provider, built in (id-PROVIDER-000001, id-PROVIDER-000005).
+"""The Keycloak provider, built in (id-PROVIDER-000001, id-PROVIDER-000005, id-PROVIDER-000006).
 
 A person logs in with the device grant and is read from userinfo; the directory is the admin API with the logged-in
-person's own rights. The local system account is a confidential client's service account, signing in with the client
-credentials grant; its secret is the first line `secret_command` prints, run without a shell (id-AUTH-000006).
+person's own rights. The local system account is setup's admin, signed in with the password grant on the realm's
+`password_client`; the password is the first line `password_command` prints, run without a shell (id-AUTH-000006).
+Its settings, as `IAM/settings.json` stores them:
 
-    {"provider": "keycloak", "issuer": "http://localhost:8080/realms/catalyst", "client": "catalyst-cli",
-     "catalyst_client": "catalyst", "system_client": "catalyst-system",
-     "secret_command": "security find-generic-password -s catalyst-system@catalyst-users -w"}
+    {"url": "http://localhost:8080", "realm": "catalyst", "client": "catalyst-cli",
+     "password_client": "catalyst-admin-cli", "catalyst_client": "catalyst"}
+
+Setup's JSON adds `definition`, the realm to create when it is missing (a path, or the realm itself), never stored.
 """
 
 from __future__ import annotations
 
-import shlex
-import subprocess
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from catalyst_users.errors import CatalystUsersError, OIDCError, ProviderUnavailableError
 from catalyst_users.provider import (
     DEFAULT_CATALYST_CLIENT,
     ProviderError,
+    SetupOutcome,
     Whoami,
+    secret_from_command,
     whoami_from_claims,
 )
 
-DEFAULT_SYSTEM_CLIENT = "catalyst-system"
+DEFAULT_PASSWORD_CLIENT = "catalyst-admin-cli"  # noqa: S105 - a client ID, not a password
+DEFAULT_ADMIN_GROUP = "/catalyst-admins"
+SERVER_ADMIN_REALM = "master"
+# What a realm definition may not hold (id-PROVIDER-000007): people, and secrets.
+PEOPLE_KEYS = ("users", "federatedUsers")
+SECRET_KEYS = ("secret", "credentials", "password", "clientSecret")
 
 
 @dataclass
 class KeycloakProvider:
     """A Keycloak realm, reached with the device login and userinfo; the directory through the admin API with the
-    logged-in person's own rights."""
+    logged-in person's own rights. `credentials` is where a logged-in person's tokens are kept between commands
+    (`~/.catalyst-users` by default): the people themselves live only in Keycloak."""
 
     issuer: str
     client: str = "catalyst-cli"
     catalyst_client: str = DEFAULT_CATALYST_CLIENT
-    store: Path | None = None
+    credentials: Path | None = None
     transport: Any = None
     timeout: float = 10.0
-    system_client: str = DEFAULT_SYSTEM_CLIENT
-    secret_command: str | list[str] | None = field(default=None, repr=False)
+    username: str | None = None
+    password_command: str | list[str] | None = field(default=None, repr=False)
+    password_client: str = DEFAULT_PASSWORD_CLIENT
     kind: str = field(default="keycloak", init=False)
 
     @classmethod
-    def from_pointer(cls, doc: dict[str, Any], store: Path | None = None, transport: Any = None) -> KeycloakProvider:
+    def from_pointer(
+        cls, doc: dict[str, Any], store: Path | None = None, transport: Any = None, credentials: Path | None = None
+    ) -> KeycloakProvider:
         if problems := cls.problems(doc):
             raise ProviderError(problems[0])
         return cls(
-            issuer=str(doc["issuer"]),
+            issuer=_issuer(doc),
             client=str(doc.get("client") or "catalyst-cli"),
             catalyst_client=str(doc.get("catalyst_client") or DEFAULT_CATALYST_CLIENT),
-            store=store,
+            credentials=credentials or store,
             transport=transport,
             timeout=float(doc.get("timeout") or 10.0),
-            system_client=str(doc.get("system_client") or DEFAULT_SYSTEM_CLIENT),
-            secret_command=doc.get("secret_command") or None,
+            username=doc.get("username") or None,
+            password_command=doc.get("password_command") or None,
+            password_client=str(doc.get("password_client") or DEFAULT_PASSWORD_CLIENT),
         )
 
     @staticmethod
     def problems(doc: dict[str, Any]) -> list[str]:
-        return [] if doc.get("issuer") else ['a "keycloak" pointer needs an "issuer"']
+        return [] if doc.get("issuer") or doc.get("url") else ['a "keycloak" pointer needs a "url" (or an "issuer")']
 
-    # --- people ------------------------------------------------------------------------
-    def _oidc(self):
+    # --- setup (id-PROVIDER-000006) --------------------------------------------------------
+    @classmethod
+    def setup(
+        cls,
+        settings: dict[str, Any],
+        username: str,
+        password: str,
+        ask_server_admin: Callable[[], tuple[str, str]],
+        transport: Any = None,
+        ask_profile: Callable[[], dict[str, str]] | None = None,
+    ) -> SetupOutcome:
+        """Check the realm at the URL: unreachable, keep the JSON; missing, create it and its admin (their profile,
+        `email`, `first_name`, `last_name`, from `ask_profile`: Keycloak signs no one in without it), then sign in;
+        present, sign in only. A refused sign-in raises, so nothing is written."""
+        from catalyst_users.http import Http, check_url
+
+        url = str(settings.get("url") or "").rstrip("/")
+        if not url:
+            raise ProviderError('the keycloak settings need a "url", e.g. "http://localhost:8080"')
+        definition = _definition(settings.get("definition"))
+        realm = str(settings.get("realm") or (definition or {}).get("realm") or "catalyst")
+        stored = {
+            "url": url,
+            "realm": realm,
+            "client": str(settings.get("client") or "catalyst-cli"),
+            "password_client": str(settings.get("password_client") or DEFAULT_PASSWORD_CLIENT),
+            "catalyst_client": str(settings.get("catalyst_client") or DEFAULT_CATALYST_CLIENT),
+        }
+        timeout = float(settings.get("timeout") or 10.0)
+        if settings.get("timeout"):
+            stored["timeout"] = timeout
+        http = Http(transport, timeout=timeout)
+        discovery = f"{url}/realms/{realm}/.well-known/openid-configuration"
+        check_url(discovery)
+        try:
+            resp = http.request("GET", discovery)
+        except ProviderUnavailableError as err:
+            return SetupOutcome("unreachable", stored, f"Keycloak is not up at {url} ({err}): settings kept, unchecked")
+        created = False
+        if resp.status == 404:
+            if definition is None:
+                raise ProviderError(f'the realm {realm} does not exist at {url}, and the settings have no "definition"')
+            profile = ask_profile() if ask_profile else {}
+            _create_realm(http, url, realm, definition, ask_server_admin, username, password, profile, settings)
+            created = True
+        elif not resp.ok:
+            raise ProviderError(f"Keycloak answered HTTP {resp.status} for the realm {realm} at {url}")
+        provider = cls.from_pointer({**stored, "username": username}, transport=transport)
+        provider._sign_in(password)
+        if created:
+            return SetupOutcome("created", stored, f"created the realm {realm} and its admin {username}, signed in")
+        return SetupOutcome("authenticated", stored, f"the realm {realm} exists: signed {username} in")
+
+    # --- people --------------------------------------------------------------------------
+    def _oidc(self, client: str | None = None):
         from catalyst_users.http import Http
         from catalyst_users.oidc import OIDCClient
 
-        return OIDCClient(self._settings(), Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
+        settings = _IssuerSettings(self.issuer.rstrip("/"), client or self.client, timeout=self.timeout)
+        return OIDCClient(settings, Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
 
     def _session(self):
         from catalyst_users.credentials import CredentialStore
         from catalyst_users.session import Session
 
-        return Session(self._oidc(), CredentialStore(self.store))
-
-    def _settings(self):
-        return _IssuerSettings(self.issuer.rstrip("/"), self.client, timeout=self.timeout)
+        return Session(self._oidc(), CredentialStore(self.credentials))
 
     def login(self, show: Callable[[Any], None]) -> Whoami:
         self._session().login(show)
@@ -125,30 +190,117 @@ class KeycloakProvider:
 
         return provision.import_users(self.directory(), users, roles)
 
-    # --- the local system account (id-AUTH-000006) ---------------------------------------
-    def _system_secret(self) -> str:
-        if not self.secret_command:
-            raise ProviderError("the system account has no secret_command in the keycloak provider's settings")
-        argv = self.secret_command if isinstance(self.secret_command, list) else shlex.split(self.secret_command)
-        shown = " ".join(argv[:1])
+    # --- the local system account: setup's admin (id-AUTH-000006) ---------------------------
+    def _sign_in(self, password: str, oidc: Any = None):
+        if not self.username:
+            raise ProviderError("the system account has no username: run `catalyst-users setup`")
         try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ProviderError(f"the system account's secret_command ({shown}) failed: {exc}") from None
-        secret = done.stdout.split("\n", 1)[0].rstrip("\r")
-        if done.returncode != 0 or not secret:
-            reason = f"exit {done.returncode}" if done.returncode else "it printed nothing"
-            raise ProviderError(f"the system account's secret_command ({shown}) gave no secret: {reason}")
-        return secret
+            oidc = oidc or self._oidc(self.password_client)
+            return oidc.password_grant(self.password_client, self.username, password)
+        except OIDCError as err:
+            if err.error in ("unauthorized_client", "invalid_client"):
+                raise ProviderError(
+                    f"the realm has no client {self.password_client} allowing a password sign-in "
+                    "(on a dev realm, keycloak/sync_clients.py adds it)"
+                ) from None
+            raise ProviderError(f"Keycloak refused {self.username}'s sign-in at {self.issuer}: {err}") from None
+
+    def _system_tokens(self, oidc: Any = None):
+        if not self.password_command:
+            raise ProviderError("the system account has no password_command: run `catalyst-users setup`")
+        password = secret_from_command(self.password_command, "the system account's password_command")
+        return self._sign_in(password, oidc)
 
     def system_token(self) -> dict[str, Any]:
-        tokens = self._oidc().client_credentials(self.system_client, self._system_secret())
+        tokens = self._system_tokens()
         return {"access_token": tokens.access_token, "token_type": "Bearer", "expires_at": tokens.expires_at}
 
     def system_whoami(self) -> Whoami:
-        oidc = self._oidc()
-        tokens = oidc.client_credentials(self.system_client, self._system_secret())
-        return whoami_from_claims(oidc.userinfo(tokens.access_token), self.issuer.rstrip("/"), self.catalyst_client)
+        oidc = self._oidc(self.password_client)
+        claims = oidc.userinfo(self._system_tokens(oidc).access_token)
+        return whoami_from_claims(claims, self.issuer.rstrip("/"), self.catalyst_client)
+
+
+def definition_problems(definition: Any) -> list[str]:
+    """What a realm definition holds that it may not: people or secrets (id-PROVIDER-000007)."""
+    if not isinstance(definition, dict):
+        return ["the realm definition is not a JSON object"]
+    found = [f"`{key}`" for key in PEOPLE_KEYS if definition.get(key)]
+
+    def walk(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = f"{path}.{key}" if path else key
+                if key in SECRET_KEYS and value not in (None, "", [], {}):
+                    found.append(f"`{here}`")
+                elif key not in PEOPLE_KEYS:
+                    walk(value, here)
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}[{i}]")
+
+    walk(definition, "")
+    return [f"the realm definition holds a person or a secret: {', '.join(found)}"] if found else []
+
+
+def _definition(value: Any) -> dict[str, Any] | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(Path(value).expanduser().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ProviderError(f"cannot read the realm definition {value}: {exc}") from None
+    if problems := definition_problems(value):
+        raise ProviderError(problems[0])
+    return value
+
+
+def _create_realm(
+    http: Any,
+    url: str,
+    realm: str,
+    definition: dict[str, Any],
+    ask_server_admin: Callable[[], tuple[str, str]],
+    username: str,
+    password: str,
+    profile: dict[str, str],
+    settings: dict[str, Any],
+) -> None:
+    """The realm from its definition, as Keycloak's server admin (asked for, used once); then its admin, a member of
+    the admin group, with the password, not temporary."""
+    from catalyst_users.admin import KeycloakAdmin
+
+    if definition.get("realm") not in (None, realm):
+        raise ProviderError(f"the realm definition is for {definition.get('realm')!r}, not {realm!r}")
+    server_user, server_password = ask_server_admin()
+    resp = http.request(
+        "POST",
+        f"{url}/realms/{SERVER_ADMIN_REALM}/protocol/openid-connect/token",
+        form={"grant_type": "password", "client_id": "admin-cli", "username": server_user, "password": server_password},
+    )
+    if not resp.ok:
+        raise ProviderError(f"Keycloak's server admin {server_user} was refused (HTTP {resp.status})")
+    token = resp.json()["access_token"]
+    created = http.request("POST", f"{url}/admin/realms", json_body={**definition, "realm": realm}, bearer=token)
+    if not created.ok:
+        raise ProviderError(f"Keycloak did not create the realm {realm} (HTTP {created.status})")
+    admin = KeycloakAdmin(_AdminSettings(f"{url}/admin/realms/{realm}", http.timeout), lambda: token, http)
+    try:
+        user = admin.create_user(username, profile.get("email"), profile.get("first_name"), profile.get("last_name"))
+        admin._call("PUT", f"/users/{user.id}", body={"emailVerified": True})
+        admin._call(
+            "PUT", f"/users/{user.id}/reset-password", body={"type": "password", "value": password, "temporary": False}
+        )
+        admin.add_member(str(settings.get("admin_group") or DEFAULT_ADMIN_GROUP), username)
+    except CatalystUsersError as err:
+        raise ProviderError(f"the realm {realm} was created, but not its admin {username}: {err}") from None
+
+
+def _issuer(doc: dict[str, Any]) -> str:
+    if doc.get("issuer"):
+        return str(doc["issuer"])
+    return f"{str(doc['url']).rstrip('/')}/realms/{doc.get('realm') or 'catalyst'}"
 
 
 @dataclass(frozen=True)

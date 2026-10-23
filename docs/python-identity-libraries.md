@@ -430,6 +430,22 @@ provider**, not a Keycloak client. Keycloak is one provider among others.
   password is never used: the realm's clients have the password grant off, and
   the OAuth 2.1 draft drops that grant.
 
+### 10.8 Decision, 2026-10-23: setup, and the admin as the system account
+
+The owner specified how catalyst-users is set up, and decided:
+
+- **`~/.catalyst-users/IAM/settings.json`** is written by `catalyst-users setup`, and asked for when missing. Setup
+  takes the provider's name, its settings as JSON, the admin's username, and their password or a command printing it.
+- **The provider checks itself.** Not up: the JSON alone is kept. Up without its realm: the realm is created from
+  the JSON's definition, as the provider's server admin (asked for, used once, never stored), then the admin.
+  With its realm: the admin is only signed in.
+- **A realm definition holds no person and no secret**, only the realm, its groups, roles and clients.
+- **A typed password goes to the OS keychain**; settings.json stores the command that reads it.
+- **The admin is the local system account**, replacing the service account of §10.7: it signs in with the password
+  grant on a dedicated client, `catalyst-admin-cli`. Keycloak's built-in `admin-cli` can check a password but its
+  token carries no roles, groups, grants or audience.
+- Keycloak signs no one in whose profile lacks an email and names, so setup asks for them when it creates the admin.
+
 ## 11. What's left
 
 - **Catalyst decision (§10):** the owner accepts or rejects it. If accepted:

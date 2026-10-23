@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import secrets
 import sys
@@ -10,6 +9,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -21,9 +21,10 @@ from catalyst_users.errors import AdminError, OIDCError
 from catalyst_users.fastapi_auth import KeycloakAuth
 from catalyst_users.identity import Identity
 from catalyst_users.oidc import OIDCClient
+from catalyst_users.provider import ProviderError
 from catalyst_users.providers.keycloak import KeycloakProvider
 from catalyst_users.session import Session
-from tests.integration.conftest import approve_device, bootstrap_token, password_token
+from tests.integration.conftest import SERVER, approve_device, bootstrap_token, password_token
 
 
 @pytest.fixture
@@ -139,35 +140,39 @@ def test_provisioned_grants_reach_the_token(settings):
     assert set(alice.commands) == {"create", "status"} and alice.reconciliation == "propose"
 
 
-def test_the_system_client_signs_in_with_client_credentials(settings):
-    """catalyst-system (env-LOCAL-000003): its generated secret gets a token for the service account, nothing else."""
-    admin = KeycloakAdmin(settings, bootstrap_token)
-    client = admin._call("GET", "/clients", params={"clientId": "catalyst-system"}).json()[0]["id"]
-    secret = admin._call("GET", f"/clients/{client}/client-secret").json()["value"]
-    url = f"{settings.issuer}/protocol/openid-connect/token"
-    form = urllib.parse.urlencode(
-        {"grant_type": "client_credentials", "client_id": "catalyst-system", "client_secret": secret}
-    ).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, data=form), timeout=10) as resp:  # noqa: S310 - loopback
-        token = json.load(resp)["access_token"]
-    claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
-    assert claims["azp"] == "catalyst-system" and claims["iss"] == settings.issuer
-    assert "catalyst-api" in ([claims["aud"]] if isinstance(claims["aud"], str) else claims["aud"])
-    wrong = urllib.parse.urlencode(
-        {"grant_type": "client_credentials", "client_id": "catalyst-system", "client_secret": "wrong"}
-    ).encode()
-    with pytest.raises(urllib.error.HTTPError) as refused:
-        urllib.request.urlopen(urllib.request.Request(url, data=wrong), timeout=10)  # noqa: S310 - loopback
-    assert refused.value.code == 401
+def test_setup_creates_a_realm_and_its_admin_then_only_signs_in(monkeypatch):
+    """Setup end to end (id-PROVIDER-000006): a throwaway realm from the dev realm's definition, its admin created
+    and signed in, a second setup only signing in, a wrong password refused; then the admin as the system account."""
+    definition = json.loads((Path(__file__).resolve().parents[2] / "keycloak" / "realm-catalyst.json").read_text())
+    realm = f"it-setup-{secrets.token_hex(4)}"
+    settings = {"url": SERVER, "realm": realm, "definition": {**definition, "realm": realm}}
+    password = f"it-{secrets.token_hex(8)}"
+    try:
+        profile = {"email": "it-owner@example.com", "first_name": "It", "last_name": "Owner"}
+        created = KeycloakProvider.setup(
+            settings, "it-owner", password, lambda: ("admin", "dev-only-admin-password"), ask_profile=lambda: profile
+        )
+        assert created.outcome == "created" and created.provider["realm"] == realm
 
+        def never() -> tuple[str, str]:
+            raise AssertionError("the realm exists: no server admin needed")
 
-def test_the_keycloak_provider_signs_the_system_account_in(settings, monkeypatch):
-    """The facade's system sign-in (id-AUTH-000006): the secret comes from secret_command, here reading the env."""
-    admin = KeycloakAdmin(settings, bootstrap_token)
-    client = admin._call("GET", "/clients", params={"clientId": "catalyst-system"}).json()[0]["id"]
-    monkeypatch.setenv("IT_SYSTEM_SECRET", admin._call("GET", f"/clients/{client}/client-secret").json()["value"])
-    command = [sys.executable, "-c", "import os; print(os.environ['IT_SYSTEM_SECRET'])"]
-    provider = KeycloakProvider(issuer=settings.issuer, secret_command=command)
-    who = provider.system_whoami()
-    assert who.username == "service-account-catalyst-system" and who.issuer == settings.issuer
-    assert provider.system_token()["access_token"]
+        again = KeycloakProvider.setup(settings, "it-owner", password, never)
+        assert again.outcome == "authenticated"
+        with pytest.raises(ProviderError, match="refused it-owner's sign-in"):
+            KeycloakProvider.setup(settings, "it-owner", "wrong", never)
+
+        monkeypatch.setenv("IT_OWNER_PASSWORD", password)
+        command = [sys.executable, "-c", "import os; print(os.environ['IT_OWNER_PASSWORD'])"]
+        system = KeycloakProvider.from_pointer(
+            {**created.provider, "username": "it-owner", "password_command": command}
+        )
+        who = system.system_whoami()
+        assert who.username == "it-owner" and who.issuer == f"{SERVER}/realms/{realm}"
+        assert "/catalyst-admins" in who.groups and "catalyst-admin" in who.roles
+        assert system.system_token()["access_token"]
+    finally:
+        url = f"{SERVER}/admin/realms/{realm}"
+        headers = {"Authorization": f"Bearer {bootstrap_token()}"}
+        deleting = urllib.request.Request(url, method="DELETE", headers=headers)  # noqa: S310 - loopback test server
+        urllib.request.urlopen(deleting, timeout=10).close()  # noqa: S310
