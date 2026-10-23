@@ -137,7 +137,10 @@ def test_provisioned_grants_reach_the_token(settings):
     who = whoami_from_claims(bob, settings.issuer, "catalyst")
     assert {"create", "freeze", "share"} <= set(who.commands) and who.reconciliation == "full"
     alice = whoami_from_claims(OIDCClient(settings).userinfo(password_token("alice")), settings.issuer, "catalyst")
-    assert set(alice.commands) == {"create", "status"} and alice.reconciliation == "propose"
+    # provisioning only adds (id-PROVIDER-000003): a realm holding catalyst's own roles gives a developer more, but
+    # never what only a tech lead or a release manager holds
+    assert {"create", "status"} <= set(alice.commands) and not {"freeze", "share"} & set(alice.commands)
+    assert alice.reconciliation == "propose"
 
 
 def test_setup_creates_a_realm_and_its_admin_then_only_signs_in(monkeypatch):
