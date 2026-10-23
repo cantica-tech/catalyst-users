@@ -96,12 +96,15 @@ class AcmeProvider:
     issuer: str = "https://acme.example.com"
 
     @classmethod
-    def from_pointer(cls, doc, store=None, transport=None): return cls(tenant=doc["tenant"])
+    def from_pointer(cls, doc, store=None, transport=None):
+        return cls(tenant=doc["tenant"])
 
     @staticmethod
-    def problems(doc): return [] if doc.get("tenant") else ['an "acme" pointer needs a "tenant"']
+    def problems(doc):
+        return [] if doc.get("tenant") else ['an "acme" pointer needs a "tenant"']
 
     def whoami(self, username=None) -> Whoami: ...
+
     # login, logout, token, users, groups, roles, directory, provision_roles, import_users,
     # system_token, system_whoami
 ```
