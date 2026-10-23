@@ -134,6 +134,14 @@ CATALYST_USERS_IT=1 uv run pytest               # also against the compose Keycl
 docker compose up -d --force-recreate           # reset the dev realm (integration runs leave it-* users)
 ```
 
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push to `development` and every pull
+request:
+
+- Ruff and the unit tests, on Python 3.11 and 3.13.
+- The integration tests, against the same pinned Keycloak.
+- `catalyst trace`: every commit must cite a work item or rule ID, or be a `chore:`. To read the private criterion,
+  CI uses a read-only deploy key, stored as the `CRITERION_DEPLOY_KEY` secret.
+
 ## Layout
 
 | Path | What |

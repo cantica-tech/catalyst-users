@@ -1,0 +1,114 @@
+# env-QUALITY-000003: lint, unit tests, integration tests against Keycloak, and catalyst trace,
+# on every push to development and every pull request.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.11.26"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}  # so `uv run` keeps the matrix interpreter instead of .python-version
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --quiet "uv==${UV_VERSION}"
+      - run: uv sync --all-extras --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pytest -q
+
+  integration:
+    # The pinned dev Keycloak from compose.yaml (env-LOCAL-000001), on the runner's loopback.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --quiet "uv==${UV_VERSION}"
+      - run: uv sync --all-extras --locked
+      - name: Start Keycloak
+        run: |
+          docker compose up -d
+          for _ in $(seq 90); do
+            curl -sf http://127.0.0.1:8080/realms/catalyst/.well-known/openid-configuration >/dev/null && exit 0
+            sleep 2
+          done
+          docker compose logs keycloak | tail -50
+          exit 1
+      - run: uv run pytest -q tests/integration
+        env:
+          CATALYST_USERS_IT: "1"
+      - if: always()
+        run: docker compose down
+
+  catalyst-trace:
+    # Every new commit cites an artifact or rule ID of the catalyst deployment, or is marked `chore:`.
+    # The criterion is its own private repository, named in catalyst.toml, cloned with a read-only deploy key.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Clone the criterion (private, read-only deploy key)
+        id: criterion
+        env:
+          CRITERION_DEPLOY_KEY: ${{ secrets.CRITERION_DEPLOY_KEY }}
+        run: |
+          if [ -z "$CRITERION_DEPLOY_KEY" ]; then
+            echo "::notice::no CRITERION_DEPLOY_KEY (a pull request from a fork): catalyst trace is skipped"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          export CATALYST_HOME="$RUNNER_TEMP/catalyst"
+          echo "CATALYST_HOME=$CATALYST_HOME" >> "$GITHUB_ENV"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$CRITERION_DEPLOY_KEY" > ~/.ssh/criterion
+          chmod 600 ~/.ssh/criterion
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          read -r name url branch < <(python3 -c 'import tomllib; d = tomllib.load(open("catalyst.toml", "rb")); print(d["project_name"], d["catalyst_repo_url"], d.get("criterion_branch") or "criterion")')
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/criterion -o IdentitiesOnly=yes" \
+            git clone -q -b "$branch" "$url" "$CATALYST_HOME/projects/$name/criterion"
+          echo "CATALYST_CLI=$CATALYST_HOME/projects/$name/criterion/bin/catalyst.pyz" >> "$GITHUB_ENV"
+      - name: catalyst trace
+        if: steps.criterion.outputs.skip != 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            range="$BEFORE..$SHA"
+          else
+            range="$SHA~1..$SHA"
+          fi
+          python3 "$CATALYST_CLI" trace "$range"
