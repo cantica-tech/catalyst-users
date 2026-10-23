@@ -13,3 +13,5 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./keycloak/realm-catalyst.json:/opt/keycloak/data/import/realm-catalyst.json:ro
+      # The dev database (H2), kept on the host so users survive a recreate.
+      - ./.keycloack/data:/opt/keycloak/data/h2
