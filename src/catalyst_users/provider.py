@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import shlex
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -109,9 +111,35 @@ class Provider(Protocol):
     ) -> Any: ...
     def import_users(self, users: list[dict[str, Any]], roles: list[dict[str, Any]]) -> Any: ...
 
-    # the local system account (id-AUTH-000006)
+    # the local system account: setup's admin (id-AUTH-000006). A provider class also has
+    # `setup(settings, username, password, ask_server_admin, transport=None) -> SetupOutcome` (id-PROVIDER-000006).
     def system_token(self) -> dict[str, Any]: ...
     def system_whoami(self) -> Whoami: ...
+
+
+@dataclass(frozen=True)
+class SetupOutcome:
+    """What setup found (id-PROVIDER-000006): `unreachable`, `created` or `authenticated`; the provider settings to
+    store in IAM/settings.json (never a realm definition or a secret); and a sentence saying so."""
+
+    outcome: str
+    provider: dict[str, Any]
+    note: str
+
+
+def secret_from_command(command: str | list[str], what: str) -> str:
+    """The first line a command prints, run without a shell; never shown, even in an error."""
+    argv = command if isinstance(command, list) else shlex.split(command)
+    shown = argv[0] if argv else "(empty)"
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise ProviderError(f"{what} ({shown}) failed: {exc}") from None
+    secret = done.stdout.split("\n", 1)[0].rstrip("\r")
+    if done.returncode != 0 or not secret:
+        reason = f"exit {done.returncode}" if done.returncode else "it printed nothing"
+        raise ProviderError(f"{what} ({shown}) gave no secret: {reason}")
+    return secret
 
 
 def unsupported(kind: str, what: str) -> ProviderError:
