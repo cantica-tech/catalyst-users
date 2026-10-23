@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — 2026-10-24
+
+- Fixed: typing only, no behaviour change: the provider table read from `config.toml`, the settings setup stores,
+  and the admin client setup builds are typed so that pyright reports nothing (catalyst vendors this code).
+
 ## 0.4.0 — 2026-10-23
 
 Setup, and the admin as the local system account (REQ-000008).

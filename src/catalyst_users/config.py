@@ -150,7 +150,8 @@ def pointer(
         raise NoSettingsError
     raw = _toml(path)
     name = str(raw.get("provider") or "keycloak")
-    table = raw.get(name) if isinstance(raw.get(name), dict) else {}
+    section = raw.get(name)
+    table: dict[str, Any] = section if isinstance(section, dict) else {}
     doc: dict[str, Any] = {"provider": name, **table}
     if name != "keycloak":
         return doc
