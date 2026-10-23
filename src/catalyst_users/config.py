@@ -1,16 +1,21 @@
-"""Settings: where the identity provider is and which clients to use.
+"""Settings: which provider catalyst-users is a facade to, and its settings (id-PROVIDER-000005).
 
-Precedence, lowest first: defaults (the local dev Keycloak), `config.toml` in the
-home directory, `CATALYST_USERS_*` environment variables, explicit overrides.
+The provider is chosen by a pointer document (`pointer`): `--pointer FILE` or `CATALYST_USERS_POINTER`, else
+`config.toml`'s `provider = "<name>"` with its `[<name>]` table, else the local dev Keycloak. The Keycloak settings
+(`Settings`) keep their own precedence, lowest first: defaults, `config.toml`'s top-level keys, `CATALYST_USERS_*`
+environment variables, explicit overrides; given explicitly, they win over the `[keycloak]` table.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
+
+from catalyst_users.errors import CatalystUsersError
 
 ENV_PREFIX = "CATALYST_USERS_"
 
@@ -64,3 +69,41 @@ def load(overrides: dict[str, Any] | None = None, config_file: Path | None = Non
     if "timeout" in values:
         values["timeout"] = float(values["timeout"])
     return replace(Settings(), **values)
+
+
+def _toml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    with path.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def pointer(
+    overrides: dict[str, Any] | None = None, config_file: Path | None = None, pointer_file: str | None = None
+) -> dict[str, Any]:
+    """The pointer document naming the provider and its settings."""
+    chosen = pointer_file or os.environ.get(f"{ENV_PREFIX}POINTER")
+    if chosen:
+        try:
+            doc = json.loads(Path(chosen).expanduser().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CatalystUsersError(f"cannot read the pointer {chosen}: {exc}") from None
+        if not isinstance(doc, dict):
+            raise CatalystUsersError(f"the pointer {chosen} is not a JSON object")
+        return doc
+    raw = _toml(config_file or home() / "config.toml")
+    name = str(raw.get("provider") or "keycloak")
+    table = raw.get(name) if isinstance(raw.get(name), dict) else {}
+    doc: dict[str, Any] = {"provider": name, **table}
+    if name != "keycloak":
+        return doc
+    settings = load(overrides, config_file)
+    explicit = any(v is not None for k, v in (overrides or {}).items() if k in ("server_url", "realm", "client_id"))
+    explicit = explicit or any(os.environ.get(ENV_PREFIX + s) for s in ("SERVER", "REALM", "CLIENT_ID"))
+    legacy = {"issuer": settings.issuer, "client": settings.client_id}
+    for key, value in legacy.items():
+        if explicit or key not in doc:
+            doc[key] = value
+    doc.setdefault("catalyst_client", settings.catalyst_client)
+    doc.setdefault("timeout", settings.timeout)
+    return doc
