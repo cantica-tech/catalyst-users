@@ -27,10 +27,18 @@ class StaticProvider:
     kind: str = field(default="static", init=False)
 
     @classmethod
-    def from_pointer(cls, doc: dict[str, Any], store: Path | None = None, transport: Any = None) -> StaticProvider:
+    def from_pointer(
+        cls, doc: dict[str, Any], store: Path | None = None, transport: Any = None, credentials: Path | None = None
+    ) -> StaticProvider:
         if os.environ.get(STATIC_FLAG) != "1":
             raise ProviderError(f'the "static" provider verifies nobody: it is for tests only ({STATIC_FLAG}=1)')
         return cls(people=list(doc.get("people") or []), role_defs=list(doc.get("roles") or []))
+
+    @classmethod
+    def setup(
+        cls, settings: dict[str, Any], username: str, password: str, ask_server_admin: Any, transport: Any = None
+    ):
+        raise unsupported("static", "setup")
 
     @staticmethod
     def problems(doc: dict[str, Any]) -> list[str]:

@@ -35,6 +35,17 @@ def _parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("providers", help="the registered providers")
+    st = sub.add_parser("setup", help="write IAM/settings.json: check, create or sign in to the provider")
+    st.add_argument("--type", help="the provider's registered name, e.g. keycloak")
+    st.add_argument("--provider", dest="provider_json", help="the provider's settings: a JSON file, or JSON")
+    st.add_argument("--username", help="the admin's username (the local system account)")
+    st.add_argument("--password-command", help="a command printing the admin's password (else it is asked for)")
+    st.add_argument("--server-admin", help="the provider's own server admin, if the realm must be created")
+    st.add_argument("--server-admin-password-command", help="a command printing the server admin's password")
+    st.add_argument("--email", help="the admin's email, if the realm and its admin must be created")
+    st.add_argument("--first-name", help="the admin's first name (default: from `git config user.name`)")
+    st.add_argument("--last-name", help="the admin's last name (default: from `git config user.name`)")
+    st.add_argument("--force", action="store_true", help="replace an existing IAM/settings.json")
     sub.add_parser("login", help="log in with a code shown in your browser")
     sub.add_parser("logout", help="revoke your session and delete local credentials")
     w = sub.add_parser("whoami", help="who you are: groups and roles")
@@ -98,7 +109,107 @@ def _out(args: argparse.Namespace, data: Any, text: str) -> None:
 
 def _provider(args: argparse.Namespace) -> Provider:
     overrides = {"server_url": args.server_url, "realm": args.realm, "client_id": args.client_id}
-    return from_pointer(config.pointer(overrides, pointer_file=args.pointer))
+    try:
+        return from_pointer(config.pointer(overrides, pointer_file=args.pointer))
+    except config.NoSettingsError:
+        if not sys.stdin.isatty():
+            raise
+        print("catalyst-users: no IAM settings yet: setting up.", file=sys.stderr)
+        _setup(args)
+        return from_pointer(config.pointer(overrides, pointer_file=args.pointer))
+
+
+# --- setup (id-PROVIDER-000006) -------------------------------------------------------------
+def _ask(question: str, given: str | None, default: str | None = None) -> str:
+    if given:
+        return given
+    if not sys.stdin.isatty():
+        raise CatalystUsersError(f"setup needs {question.lower()} (no terminal to ask: pass it as an option)")
+    hint = f" [{default}]" if default else ""
+    answer = input(f"{question}{hint}: ").strip() or (default or "")
+    if not answer:
+        raise CatalystUsersError(f"setup needs {question.lower()}")
+    return answer
+
+
+def _provider_settings(value: str) -> dict[str, Any]:
+    path = Path(value).expanduser()
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8") if path.is_file() else value)
+    except (OSError, ValueError) as exc:
+        raise CatalystUsersError(f"the provider settings are neither a JSON file nor JSON: {exc}") from None
+    if not isinstance(doc, dict):
+        raise CatalystUsersError("the provider settings are not a JSON object")
+    return doc
+
+
+def _password(command: str | None, prompt: str) -> tuple[str, str | None]:
+    """The password and the command that printed it; a typed password has no command (yet)."""
+    from catalyst_users.provider import secret_from_command
+
+    if command is None and sys.stdin.isatty():
+        command = input(f"{prompt}: a command printing it (Enter to type it instead): ").strip() or None
+    if command:
+        return secret_from_command(command, prompt), command
+    if not sys.stdin.isatty():
+        raise CatalystUsersError(f"setup needs {prompt.lower()}'s command (no terminal to ask)")
+    password = getpass.getpass(f"{prompt}: ")
+    if not password:
+        raise CatalystUsersError(f"setup needs {prompt.lower()}")
+    return password, None
+
+
+def _setup(args: argparse.Namespace) -> int:
+    from catalyst_users import keychain
+    from catalyst_users.provider import provider_class
+
+    path = config.settings_file()
+    if path.exists() and not getattr(args, "force", False):
+        raise CatalystUsersError(f"{path} exists: pass --force to replace it")
+    names = ", ".join(registered())
+    kind = _ask(f"Provider type ({names})", getattr(args, "type", None), "keycloak")
+    cls = provider_class(kind)
+    settings = _provider_settings(
+        _ask("Provider settings (a JSON file, or JSON)", getattr(args, "provider_json", None))
+    )
+    username = _ask("Admin username", getattr(args, "username", None))
+    password, command = _password(getattr(args, "password_command", None), "The admin's password")
+
+    def server_admin() -> tuple[str, str]:
+        user = _ask("The provider's server admin username", getattr(args, "server_admin", None))
+        secret, _ = _password(getattr(args, "server_admin_password_command", None), "The server admin's password")
+        return user, secret
+
+    def profile() -> dict[str, str]:
+        import subprocess
+
+        git = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True, check=False).stdout.split()
+        return {
+            "email": _ask("The admin's email", getattr(args, "email", None)),
+            "first_name": _ask(
+                "The admin's first name", getattr(args, "first_name", None), git[0] if git else username
+            ),
+            "last_name": _ask(
+                "The admin's last name",
+                getattr(args, "last_name", None),
+                " ".join(git[1:]) if len(git) > 1 else username,
+            ),
+        }
+
+    outcome = cls.setup(settings, username, password, server_admin, ask_profile=profile)
+    if command is None:  # typed: into the keychain, and the command reading it into settings.json
+        where = outcome.provider.get("url") or kind
+        realm = outcome.provider.get("realm")
+        command = keychain.store(f"{username}@{where}" + (f"/{realm}" if realm else ""), password)
+    written = config.write_settings(
+        {"type": kind, "username": username, "provider": outcome.provider, "password_command": command}
+    )
+    _out(
+        args,
+        {"outcome": outcome.outcome, "settings": str(written), "type": kind, "username": username},
+        f"{outcome.note}.\nWrote {written}.",
+    )
+    return 0
 
 
 def _whoami(args: argparse.Namespace, who: Whoami) -> None:
@@ -118,6 +229,8 @@ def _whoami(args: argparse.Namespace, who: Whoami) -> None:
 
 
 def _run(args: argparse.Namespace) -> int:
+    if args.command == "setup":
+        return _setup(args)
     if args.command == "providers":
         found = registered()
         _out(

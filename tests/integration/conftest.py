@@ -17,7 +17,7 @@ from catalyst_users.config import Settings
 from catalyst_users.oidc import DeviceCode
 
 SERVER = os.environ.get("CATALYST_USERS_IT_SERVER", "http://127.0.0.1:8080")
-DEV_PASSWORD = "dev-only-{}-password"  # the realm's dev-only users (keycloak/realm-catalyst.json)
+DEV_PASSWORD = "dev-only-{}-password"  # the test people's (PEOPLE, below)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -29,9 +29,54 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+# The integration tests' people: development-only, created through the bootstrap admin, never in the realm file
+# (id-PROVIDER-000007, env-LOCAL-000001).
+PEOPLE = {
+    "alice": ("Alice", "Developer", "/cantica-tech/catalyst/developers"),
+    "bob": ("Bob", "Maintainer", "/cantica-tech/catalyst/maintainers"),
+    "ada": ("Ada", "Stakeholder", "/cantica-tech"),
+}
+
+
+def _admin_call(method: str, path: str, body: object = None) -> object:
+    req = urllib.request.Request(  # noqa: S310 - loopback test server
+        f"{SERVER}/admin/realms/catalyst{path}",
+        method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {bootstrap_token()}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+        raw = resp.read()
+    return json.loads(raw) if raw else None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def dev_people() -> None:
+    """Each test person, with their password and group, created when the realm lacks them."""
+    if os.environ.get("CATALYST_USERS_IT") != "1":
+        return
+    for username, (first, last, group) in PEOPLE.items():
+        found = _admin_call("GET", f"/users?username={username}&exact=true")
+        if not found:
+            rep = {"username": username, "enabled": True, "emailVerified": True, "firstName": first, "lastName": last}
+            _admin_call("POST", "/users", {**rep, "email": f"{username}@example.com"})
+            found = _admin_call("GET", f"/users?username={username}&exact=true")
+        user = found[0]["id"]
+        reset = {"type": "password", "value": DEV_PASSWORD.format(username), "temporary": False}
+        _admin_call("PUT", f"/users/{user}/reset-password", reset)
+        target = _admin_call("GET", "/group-by-path/" + group.strip("/"))
+        _admin_call("PUT", f"/users/{user}/groups/{target['id']}")
+
+
+def api_secret() -> str:
+    """catalyst-api's secret, which Keycloak generated: the realm file holds none."""
+    client = _admin_call("GET", "/clients?clientId=catalyst-api")[0]["id"]
+    return _admin_call("GET", f"/clients/{client}/client-secret")["value"]
+
+
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(server_url=SERVER, api_client_secret="dev-only-api-secret")
+    return Settings(server_url=SERVER, api_client_secret=api_secret())
 
 
 def password_token(username: str, client_id: str = "catalyst-tests") -> str:

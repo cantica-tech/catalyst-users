@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import base64
 import importlib.metadata
 import json
 import sys
@@ -100,7 +99,13 @@ def test_the_built_ins_stay_importable_from_the_facade():
 # --- the pointer ------------------------------------------------------------------------
 
 
-def test_with_no_configuration_the_pointer_is_the_local_dev_keycloak():
+def test_with_no_configuration_setup_is_needed():
+    with pytest.raises(config.NoSettingsError, match="run `catalyst-users setup`"):
+        config.pointer()
+
+
+def test_explicit_keycloak_settings_need_no_configuration(monkeypatch):
+    monkeypatch.setenv("CATALYST_USERS_SERVER", "http://localhost:8080")
     assert config.pointer() == {
         "provider": "keycloak",
         "issuer": "http://localhost:8080/realms/catalyst",
@@ -144,33 +149,37 @@ def test_a_pointer_file_wins_and_must_be_a_json_object(tmp_path, monkeypatch):
         config.pointer(pointer_file=str(path))
 
 
-# --- the local system account -----------------------------------------------------------
+# --- the local system account: setup's admin -------------------------------------------
 
 
-def _system(transport, secret_command: Any = SECRET_COMMAND) -> KeycloakProvider:
-    transport.on("POST", f"{OIDC}/token", reply(body={"access_token": "at-system", "expires_in": 300}))
-    transport.on(
-        "GET", f"{OIDC}/userinfo", reply(body={"sub": "sa-1", "preferred_username": "service-account-catalyst-system"})
-    )
-    return KeycloakProvider(issuer=ISSUER, transport=transport, secret_command=secret_command)
+def _system(transport, password_command: Any = SECRET_COMMAND, username: str | None = "owner") -> KeycloakProvider:
+    transport.on("POST", f"{OIDC}/token", reply(body={"access_token": "at-admin", "expires_in": 300}))
+    transport.on("GET", f"{OIDC}/userinfo", reply(body={"sub": "u-1", "preferred_username": "owner", "groups": ["/a"]}))
+    return KeycloakProvider(issuer=ISSUER, transport=transport, username=username, password_command=password_command)
 
 
-def test_the_system_account_signs_in_with_client_credentials(transport):
+def test_the_system_account_signs_in_with_the_password_grant(transport):
     token = _system(transport).system_token()
-    assert token["access_token"] == "at-system" and token["token_type"] == "Bearer"
-    assert transport.form() == {"grant_type": "client_credentials", "scope": "openid"}
-    sent = transport.requests[-1].headers["Authorization"]
-    assert sent == "Basic " + base64.b64encode(b"catalyst-system:s3cret").decode()
+    assert token["access_token"] == "at-admin" and token["token_type"] == "Bearer"
+    assert transport.form() == {
+        "grant_type": "password",
+        "client_id": "catalyst-admin-cli",
+        "username": "owner",
+        "password": "s3cret",
+        "scope": "openid",
+    }
 
 
 def test_the_system_account_is_read_from_userinfo(transport):
     who = _system(transport).system_whoami()
-    assert (who.username, who.subject, who.issuer) == ("service-account-catalyst-system", "sa-1", ISSUER)
+    assert (who.username, who.subject, who.issuer, who.groups) == ("owner", "u-1", ISSUER, ("/a",))
 
 
-def test_a_missing_or_failing_secret_command_is_explained_without_a_secret(transport):
-    with pytest.raises(ProviderError, match="no secret_command"):
-        _system(transport, secret_command=None).system_token()
+def test_a_missing_or_failing_password_command_is_explained_without_a_secret(transport):
+    with pytest.raises(ProviderError, match="no password_command"):
+        _system(transport, password_command=None).system_token()
+    with pytest.raises(ProviderError, match="no username"):
+        _system(transport, username=None).system_token()
     with pytest.raises(ProviderError, match="gave no secret: exit 3"):
         _system(transport, [sys.executable, "-c", "import sys; sys.exit(3)"]).system_token()
     with pytest.raises(ProviderError, match="printed nothing"):
@@ -178,6 +187,17 @@ def test_a_missing_or_failing_secret_command_is_explained_without_a_secret(trans
     with pytest.raises(ProviderError, match="failed"):
         _system(transport, "/no/such/command").system_token()
     assert not transport.calls("POST")
+
+
+def test_a_refused_sign_in_names_the_account_never_the_password(transport):
+    provider = _system(transport)
+    transport.on("POST", f"{OIDC}/token", reply(401, {"error": "invalid_grant", "error_description": "bad"}))
+    with pytest.raises(ProviderError, match="refused owner's sign-in") as refused:
+        provider.system_token()
+    assert "s3cret" not in str(refused.value)
+    transport.on("POST", f"{OIDC}/token", reply(401, {"error": "unauthorized_client"}))
+    with pytest.raises(ProviderError, match="no client catalyst-admin-cli allowing a password sign-in"):
+        provider.system_token()
 
 
 def test_the_static_provider_has_no_system_account(monkeypatch):
@@ -198,7 +218,9 @@ def cli_transport(monkeypatch, transport, tmp_path):
 
     monkeypatch.setattr(Http, "__init__", init)
     pointer = tmp_path / "pointer.json"
-    pointer.write_text(json.dumps({"provider": "keycloak", "issuer": ISSUER, "secret_command": SECRET_COMMAND}))
+    pointer.write_text(
+        json.dumps({"provider": "keycloak", "issuer": ISSUER, "username": "owner", "password_command": SECRET_COMMAND})
+    )
     return pointer
 
 
@@ -211,11 +233,11 @@ def test_providers_lists_the_registry(capsys, entry_points):
 def test_token_and_whoami_for_the_system_account(cli_transport, transport, capsys):
     _system(transport)
     assert cli.main(["--pointer", str(cli_transport), "token", "--system"]) == 0
-    assert capsys.readouterr().out.strip() == "at-system"
+    assert capsys.readouterr().out.strip() == "at-admin"
     assert cli.main(["--pointer", str(cli_transport), "--json", "whoami", "--system"]) == 0
     out = capsys.readouterr().out
-    assert json.loads(out)["username"] == "service-account-catalyst-system"
-    assert "s3cret" not in out and "at-system" not in out
+    assert json.loads(out)["username"] == "owner"
+    assert "s3cret" not in out and "at-admin" not in out
 
 
 def test_the_cli_reaches_a_registered_provider(entry_points, tmp_path, capsys):

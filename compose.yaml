@@ -1,6 +1,6 @@
 # Local identity provider for development and integration tests (env-LOCAL-000001).
-# DEV ONLY: the admin password below and everything in keycloak/realm-catalyst.json
-# are development credentials, reachable on the loopback address only.
+# DEV ONLY: the bootstrap admin password below is a development credential, reachable on the
+# loopback address only. keycloak/realm-catalyst.json holds no person and no secret.
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.0
