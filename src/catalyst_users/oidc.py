@@ -62,7 +62,8 @@ class Tokens:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Tokens:
-        return cls(**{k: data.get(k) for k in cls.__dataclass_fields__ if k in data})
+        fields: dict[str, Any] = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        return cls(**fields)
 
 
 @dataclass(frozen=True)

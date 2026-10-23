@@ -261,7 +261,6 @@
       "firstName": "Ada",
       "lastName": "Admin",
       "groups": [
-        "/catalyst-admins",
         "/cantica-tech"
       ],
       "credentials": [

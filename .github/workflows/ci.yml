@@ -50,6 +50,9 @@ jobs:
       - run: uv sync --all-extras --locked
       - name: Start Keycloak
         run: |
+          # the database directory compose.yaml mounts (env-LOCAL-000002): created here, writable by Keycloak's
+          # non-root user, or Docker creates it owned by root and H2 cannot write
+          mkdir -p .keycloack/data && chmod 777 .keycloack/data
           docker compose up -d
           for _ in $(seq 90); do
             curl -sf http://127.0.0.1:8080/realms/catalyst/.well-known/openid-configuration >/dev/null && exit 0
