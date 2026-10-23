@@ -147,6 +147,21 @@
             "userinfo.token.claim": "true",
             "introspection.token.claim": "true"
           }
+        },
+        {
+          "name": "catalyst grants",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "catalyst",
+            "claim.name": "resource_access.${client_id}.roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
         }
       ]
     },
@@ -212,8 +227,34 @@
             "userinfo.token.claim": "true",
             "introspection.token.claim": "true"
           }
+        },
+        {
+          "name": "catalyst grants",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "catalyst",
+            "claim.name": "resource_access.${client_id}.roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
         }
       ]
+    },
+    {
+      "clientId": "catalyst",
+      "name": "catalyst (grants: its roles are the commands catalyst roles may run)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
     }
   ],
   "users": [

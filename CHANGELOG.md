@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-10-23
+
+The facade (REQ-000005, catalyst design 29): catalyst-users is how catalyst reaches people, whatever manages them.
+
+- Added: `catalyst_users.provider`: a `Provider` interface built from a pointer document (`provider`, `issuer`,
+  `client`, `catalyst_client`); `KeycloakProvider`; `whoami` with groups, roles and grants.
+- Added: grants are the catalyst client's roles in the token: `cmd:<command>` (`cmd:*` every one) and
+  `reconcile:full|propose`; a role is a realm role composed of the grants it gives.
+- Added: `catalyst-users roles provision FILE` writes a catalyst roles document into the realm (roles, grants,
+  composites, the claim mapper; adds only); `catalyst-users users import FILE --roles FILE` brings a catalyst
+  `users.json` in; `whoami` shows the grants. `keycloak/catalyst-roles.json`: catalyst's roles for the dev realm.
+- Added: a `static` backend for tests only, refused unless `CATALYST_ALLOW_STATIC_IDENTITY=1`.
+- Changed: the dev realm has the `catalyst` client and the grants mapper on its login clients.
+
 ## 0.1.1 — 2026-10-23
 
 - Fixed: `Tokens.from_dict` passes only the fields stored, so a type checker sees no `None` where a string or a

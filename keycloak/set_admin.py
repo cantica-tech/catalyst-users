@@ -57,7 +57,7 @@ def bootstrap_token(server: str, username: str, password: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     p.add_argument("--email", required=True)
     p.add_argument("--service", default="osteck@catalyst-users", help="the keychain item's service")
     p.add_argument("--server", default="http://127.0.0.1:8080")

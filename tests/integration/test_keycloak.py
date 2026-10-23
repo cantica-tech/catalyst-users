@@ -105,3 +105,28 @@ def test_fastapi_with_real_tokens(settings):
     assert client.get("/release", headers={"Authorization": f"Bearer {alice}"}).status_code == 403
     assert client.get("/catalyst", headers={"Authorization": f"Bearer {alice}"}).json()["username"] == "alice"
     assert client.get("/catalyst", headers={"Authorization": "Bearer forged"}).status_code == 401
+
+
+def test_provisioned_grants_reach_the_token(settings):
+    from catalyst_users import provision
+    from catalyst_users.provider import whoami_from_claims
+
+    roles = [
+        {
+            "name": "Tech Lead / Architect",
+            "id": "tech-lead",
+            "actions": ["/create", "/freeze"],
+            "reconciliation": "full",
+        },
+        {"name": "Release Manager", "id": "release-manager", "actions": ["/share"], "reconciliation": "full"},
+        {"name": "Developer", "id": "developer", "actions": ["/create", "/status"], "reconciliation": "propose"},
+    ]
+    admin = KeycloakAdmin(settings, bootstrap_token)
+    provision.provision(admin, roles, login_clients=("catalyst-cli", "catalyst-tests"))
+    again = provision.provision(admin, roles, login_clients=("catalyst-cli", "catalyst-tests"))
+    assert again.created == []  # idempotent
+    bob = OIDCClient(settings).userinfo(password_token("bob"))  # maintainers: tech-lead, release-manager
+    who = whoami_from_claims(bob, settings.issuer, "catalyst")
+    assert {"create", "freeze", "share"} <= set(who.commands) and who.reconciliation == "full"
+    alice = whoami_from_claims(OIDCClient(settings).userinfo(password_token("alice")), settings.issuer, "catalyst")
+    assert set(alice.commands) == {"create", "status"} and alice.reconciliation == "propose"
