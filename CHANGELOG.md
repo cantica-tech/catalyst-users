@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 — 2026-10-23
+
+Setup, and the admin as the local system account (REQ-000008).
+
+- Added: `catalyst-users setup` writes `~/.catalyst-users/IAM/settings.json` (`0600`): the provider's type, the
+  admin's username, the connection settings and a password command, never a secret. The provider checks itself: not
+  up, the JSON is kept unchecked; up without its realm, the realm is created from the JSON's `definition` as the
+  server admin (asked for, used once) and the admin with it; up with its realm, the admin is signed in only. A typed
+  password goes into the OS keychain, and the command that reads it is stored.
+- Changed: with no settings, a command asks for setup in a terminal and refuses otherwise; `--pointer`, explicit
+  Keycloak flags or environment, and `config.toml` still choose the provider.
+- Changed: the local system account is setup's admin, signed in with the password grant on the realm's
+  `catalyst-admin-cli` client; `catalyst-system` and `keycloak/set_system_client.py` are removed.
+- Changed: a realm definition holding a person or a secret is refused. `keycloak/realm-catalyst.json` no longer seeds
+  users or the API client's secret; the integration tests create their people through the bootstrap admin.
+- Added: `keycloak/sync_clients.py` adds the clients the realm file declares to a running dev realm.
+- Changed: the provider's token directory is named `credentials` (`store` still accepted).
+
 ## 0.3.0 — 2026-10-23
 
 A command-line facade to any identity provider (REQ-000007), and the local system account (REQ-000006).
