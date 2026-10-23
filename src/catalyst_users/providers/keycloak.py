@@ -97,7 +97,7 @@ class KeycloakProvider:
             raise ProviderError('the keycloak settings need a "url", e.g. "http://localhost:8080"')
         definition = _definition(settings.get("definition"))
         realm = str(settings.get("realm") or (definition or {}).get("realm") or "catalyst")
-        stored = {
+        stored: dict[str, Any] = {
             "url": url,
             "realm": realm,
             "client": str(settings.get("client") or "catalyst-cli"),
@@ -285,7 +285,7 @@ def _create_realm(
     created = http.request("POST", f"{url}/admin/realms", json_body={**definition, "realm": realm}, bearer=token)
     if not created.ok:
         raise ProviderError(f"Keycloak did not create the realm {realm} (HTTP {created.status})")
-    admin = KeycloakAdmin(_AdminSettings(f"{url}/admin/realms/{realm}", http.timeout), lambda: token, http)
+    admin = KeycloakAdmin(_AdminSettings(f"{url}/admin/realms/{realm}", http.timeout), lambda: token, http)  # type: ignore[arg-type]
     try:
         user = admin.create_user(username, profile.get("email"), profile.get("first_name"), profile.get("last_name"))
         admin._call("PUT", f"/users/{user.id}", body={"emailVerified": True})
