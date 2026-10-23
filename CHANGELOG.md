@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 — 2026-10-23
+
+A command-line facade to any identity provider (REQ-000007), and the local system account (REQ-000006).
+
+- Added: providers are registered by name. The built-in ones are modules of `catalyst_users.providers` (`keycloak`,
+  `static`); an installed package adds its own through the entry-point group `catalyst_users.providers`, never
+  replacing a built-in one. `catalyst-users providers` lists them.
+- Added: the provider is chosen by a pointer: `--pointer FILE` or `CATALYST_USERS_POINTER`, else `config.toml`'s
+  `provider = "<name>"` with its `[<name>]` table, else the local dev Keycloak as before.
+- Changed: every CLI command goes through the provider; `--server`, `--realm` and `--client-id` are Keycloak's
+  settings and keep working.
+- Added: the local system account, a machine identity: `token --system` and `whoami --system`. Keycloak's is the
+  service account of the confidential client `catalyst-system` (client credentials), its secret the first line of
+  `secret_command`, run without a shell and never stored or printed.
+- Added: the dev realm declares `catalyst-system` without a secret; `keycloak/set_system_client.py` creates it in a
+  running realm and keeps the generated secret in the macOS keychain.
+
 ## 0.2.0 — 2026-10-23
 
 The facade (REQ-000005, catalyst design 29): catalyst-users is how catalyst reaches people, whatever manages them.

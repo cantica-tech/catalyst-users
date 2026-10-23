@@ -409,6 +409,27 @@ documentation in `docs/users-registry.md`.
 | Our own service (pwdlib + PyCasbin + PyJWT) | Full control, but we would own a login server's security, which is the opposite of "very simple". |
 | Keep the registry in the criterion | Doesn't meet the goal; no enterprise single sign-on, MFA or central deactivation. |
 
+### 10.7 Decision, 2026-10-23: a command-line facade to any provider
+
+The owner decided that catalyst-users is a **command-line facade to any identity
+provider**, not a Keycloak client. Keycloak is one provider among others.
+
+- **Providers are registered by name.** The built-in ones are modules of
+  `catalyst_users.providers` (`keycloak`; `static` for tests). An installed
+  package adds its own through the entry-point group `catalyst_users.providers`,
+  and never replaces a built-in one. Registering a module path directly in the
+  pointer was rejected: the pointer would run whatever code it names.
+- **catalyst-users holds the configuration.** `~/.catalyst-users/config.toml`
+  names the provider and its settings (`--pointer FILE` overrides). A client,
+  such as catalyst's VS Code extension, needs only the command to run.
+- **The local system account is a machine identity, held by catalyst-users.**
+  `catalyst-users token --system` signs it in through the provider. Keycloak's
+  is the service account of the confidential client `catalyst-system` (client
+  credentials grant). Its secret comes from a command in the provider's settings
+  (the macOS keychain locally), so no client holds a credential. A person's
+  password is never used: the realm's clients have the password grant off, and
+  the OAuth 2.1 draft drops that grant.
+
 ## 11. What's left
 
 - **Catalyst decision (§10):** the owner accepts or rejects it. If accepted:

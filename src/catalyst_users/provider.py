@@ -1,20 +1,24 @@
-"""The facade (id-PROVIDER-000001..000004): one interface to whatever manages the people.
+"""The facade (id-PROVIDER-000001..000005): one interface to whatever manages the people.
 
-A pointer document chooses the backend:
+A pointer document chooses the backend by its registered name:
 
     {"provider": "keycloak", "issuer": "https://id.example.com/realms/catalyst",
      "client": "catalyst-cli", "catalyst_client": "catalyst"}
 
-`from_pointer` builds the provider; `whoami` says who is logged in, with their groups, roles and grants. A grant is
+Providers are registered (id-PROVIDER-000005): the built-in ones are modules of `catalyst_users.providers`
+(`keycloak`, `static`), and any installed package adds its own through the entry-point group
+`catalyst_users.providers`, never replacing a built-in. `from_pointer` builds the provider; `whoami` says who is logged in, with their groups, roles and grants. A grant is
 a client role of the catalyst client in the token: `cmd:<command>` (`cmd:*` every command) and
 `reconcile:full|propose`. The backend resolves composites and groups, so no client needs an admin secret.
 """
 
 from __future__ import annotations
 
-import os
+import importlib
+import importlib.metadata
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -52,6 +56,17 @@ class Whoami:
         held = {g[len(RECONCILE) :] for g in self.grants if g.startswith(RECONCILE)}
         return max((lvl for lvl in LEVELS if lvl in held), key=LEVELS.index, default="none")
 
+    def signer(self, at: datetime | None = None) -> dict[str, str]:
+        """The permanent record of this identity signing something (id-SIGN-000001): `iss` + `sub` identify it."""
+        moment = (at or datetime.now(UTC)).astimezone(UTC)
+        return {
+            "iss": self.issuer,
+            "sub": self.subject,
+            "username": self.username,
+            "name": self.name,
+            "at": moment.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        }
+
     def grants_command(self, command: str) -> bool:
         return "*" in self.commands or command.lstrip("/") in self.commands
 
@@ -73,178 +88,99 @@ def whoami_from_claims(claims: dict[str, Any], issuer: str, catalyst_client: str
 
 
 class Provider(Protocol):
+    """What a provider does. An operation it cannot do raises `ProviderError` saying so (`unsupported`)."""
+
     kind: str
     issuer: str
 
+    # people, with their own rights
     def login(self, show: Callable[[Any], None]) -> Whoami: ...
     def logout(self) -> str | None: ...
     def whoami(self, username: str | None = None) -> Whoami: ...
+    def token(self) -> str: ...
     def users(self) -> list[dict[str, Any]]: ...
     def groups(self) -> list[dict[str, Any]]: ...
     def roles(self) -> list[dict[str, Any]]: ...
 
+    # the directory, for the CLI's users/groups/roles commands (id-DIR-000001..000004)
+    def directory(self) -> Any: ...
+    def provision_roles(
+        self, roles: list[dict[str, Any]], catalyst_client: str, login_clients: tuple[str, ...]
+    ) -> Any: ...
+    def import_users(self, users: list[dict[str, Any]], roles: list[dict[str, Any]]) -> Any: ...
 
-# --- Keycloak --------------------------------------------------------------------------
-@dataclass
-class KeycloakProvider:
-    """A Keycloak realm, reached with the device login and userinfo; the directory through the admin API with the
-    logged-in person's own rights."""
+    # the local system account (id-AUTH-000006)
+    def system_token(self) -> dict[str, Any]: ...
+    def system_whoami(self) -> Whoami: ...
 
-    issuer: str
-    client: str = "catalyst-cli"
-    catalyst_client: str = DEFAULT_CATALYST_CLIENT
-    store: Path | None = None
-    transport: Any = None
-    timeout: float = 10.0
-    kind: str = field(default="keycloak", init=False)
 
-    def _session(self):
-        from catalyst_users.credentials import CredentialStore
-        from catalyst_users.http import Http
-        from catalyst_users.oidc import OIDCClient
-        from catalyst_users.session import Session
-
-        oidc = OIDCClient(self._settings(), Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
-        return Session(oidc, CredentialStore(self.store))
-
-    def _settings(self):
-        return _IssuerSettings(self.issuer.rstrip("/"), self.client, timeout=self.timeout)
-
-    def login(self, show: Callable[[Any], None]) -> Whoami:
-        self._session().login(show)
-        return self.whoami()
-
-    def logout(self) -> str | None:
-        return self._session().logout()
-
-    def whoami(self, username: str | None = None) -> Whoami:
-        session = self._session()
-        claims = session.oidc.userinfo(session.access_token())
-        who = whoami_from_claims(claims, self.issuer.rstrip("/"), self.catalyst_client)
-        if username and username.lower() not in {who.username.lower(), who.subject}:
-            raise ProviderError(f"logged in as {who.username}, not {username}: log in as them first")
-        return who
-
-    def _admin(self):
-        from catalyst_users.admin import KeycloakAdmin
-        from catalyst_users.http import Http
-
-        session = self._session()
-        base, realm = self.issuer.rstrip("/").rsplit("/realms/", 1)
-        settings = _AdminSettings(f"{base}/admin/realms/{realm}", self.timeout)
-        return KeycloakAdmin(settings, session.access_token, Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
-
-    def users(self) -> list[dict[str, Any]]:
-        return [u.__dict__ for u in self._admin().list_users()]
-
-    def groups(self) -> list[dict[str, Any]]:
-        return [{"path": g.path, "roles": list(g.roles)} for g in self._admin().groups()]
-
-    def roles(self) -> list[dict[str, Any]]:
-        return [{"name": n, "description": d} for n, d in self._admin().roles()]
+def unsupported(kind: str, what: str) -> ProviderError:
+    return ProviderError(f"the {kind} provider does not support {what}")
 
 
 @dataclass(frozen=True)
-class _IssuerSettings:
-    """What the OIDC client reads, for an issuer given whole."""
-
-    issuer: str
-    client_id: str
-    api_client_id: str = "catalyst-api"
-    api_client_secret: str | None = None
-    timeout: float = 10.0
+class Registration:
+    name: str
+    target: str  # "module:attribute"
+    source: str  # "built-in", or the distribution that registers it
 
 
-@dataclass(frozen=True)
-class _AdminSettings:
-    admin_url: str
-    timeout: float = 10.0
+ENTRY_POINT_GROUP = "catalyst_users.providers"
+BUILT_IN = {
+    "keycloak": "catalyst_users.providers.keycloak:KeycloakProvider",
+    "static": "catalyst_users.providers.static:StaticProvider",
+}
 
 
-# --- static, for tests ----------------------------------------------------------------
-@dataclass
-class StaticProvider:
-    """People declared in the pointer, verified by nothing (id-PROVIDER-000004): for tests only.
+def registered() -> dict[str, Registration]:
+    """Every provider by name: the built-in ones, then those installed packages register (id-PROVIDER-000005).
+    An entry point never replaces a built-in provider of the same name."""
+    found = {name: Registration(name, target, "built-in") for name, target in BUILT_IN.items()}
+    for ep in importlib.metadata.entry_points(group=ENTRY_POINT_GROUP):
+        if ep.name not in found:
+            dist = getattr(ep, "dist", None)
+            found[ep.name] = Registration(ep.name, ep.value, getattr(dist, "name", None) or "entry point")
+    return found
 
-    `people`: `{username, name, groups, roles}`; `roles`: `{id, name, grants}` (a role's grants are `cmd:…` and
-    `reconcile:…`, as the token would carry them). The logged-in person is the one named, else the only one."""
 
-    issuer: str = "static:"
-    people: list[dict[str, Any]] = field(default_factory=list)
-    role_defs: list[dict[str, Any]] = field(default_factory=list)
-    kind: str = field(default="static", init=False)
-
-    def login(self, show: Callable[[Any], None]) -> Whoami:
-        return self.whoami()
-
-    def logout(self) -> str | None:
-        return None
-
-    def whoami(self, username: str | None = None) -> Whoami:
-        if username:
-            wanted = username.strip().lower()
-            found = [p for p in self.people if wanted in {str(p.get(k, "")).lower() for k in ("username", "name")}]
-        else:
-            found = [p for p in self.people if p.get("active", True)]
-        if len(found) != 1:
-            raise ProviderError("name who is signing" if not username else f"no declared person {username!r}")
-        person = found[0]
-        if not person.get("active", True):
-            raise ProviderError(f"{person['username']} is disabled")
-        roles = tuple(sorted(str(r) for r in person.get("roles") or ()))
-        grants = {g for r in self.role_defs if str(r.get("id")) in roles for g in r.get("grants") or ()}
-        return Whoami(
-            issuer=self.issuer,
-            subject=str(person.get("subject") or person["username"]),
-            username=str(person["username"]),
-            name=str(person.get("name") or person["username"]),
-            email=person.get("email"),
-            groups=tuple(sorted(person.get("groups") or ())),
-            roles=roles,
-            grants=tuple(sorted(grants)),
-        )
-
-    def users(self) -> list[dict[str, Any]]:
-        return [dict(p) for p in self.people]
-
-    def groups(self) -> list[dict[str, Any]]:
-        paths = sorted({g for p in self.people for g in p.get("groups") or ()})
-        return [{"path": g, "roles": []} for g in paths]
-
-    def roles(self) -> list[dict[str, Any]]:
-        return [{"name": r.get("id"), "description": r.get("name") or ""} for r in self.role_defs]
+def provider_class(name: str) -> Any:
+    """The class registered as `name`: `from_pointer(doc, store=…, transport=…)` builds it, `problems(doc)` checks."""
+    known = registered()
+    if name not in known:
+        raise ProviderError(f"unknown provider {name!r} ({', '.join(known)})")
+    module, _, attr = known[name].target.partition(":")
+    try:
+        target = getattr(importlib.import_module(module), attr)
+    except (ImportError, AttributeError) as exc:
+        raise ProviderError(f"the provider {name!r} ({known[name].target}) cannot be loaded: {exc}") from None
+    return target
 
 
 # --- the pointer ---------------------------------------------------------------------
 def from_pointer(doc: dict[str, Any], store: Path | None = None, transport: Any = None) -> Provider:
-    """The backend a pointer document names (id-PROVIDER-000001)."""
-    kind = str(doc.get("provider") or "")
-    if kind == "keycloak":
-        if not doc.get("issuer"):
-            raise ProviderError('a "keycloak" pointer needs an "issuer"')
-        return KeycloakProvider(
-            issuer=str(doc["issuer"]),
-            client=str(doc.get("client") or "catalyst-cli"),
-            catalyst_client=str(doc.get("catalyst_client") or DEFAULT_CATALYST_CLIENT),
-            store=store,
-            transport=transport,
-        )
-    if kind == "static":
-        if os.environ.get(STATIC_FLAG) != "1":
-            raise ProviderError(f'the "static" provider verifies nobody: it is for tests only ({STATIC_FLAG}=1)')
-        return StaticProvider(people=list(doc.get("people") or []), role_defs=list(doc.get("roles") or []))
-    raise ProviderError(f"unknown provider {kind!r} (keycloak, static)")
+    """The backend a pointer document names (id-PROVIDER-000001), through the registry."""
+    return provider_class(str(doc.get("provider") or "")).from_pointer(doc, store=store, transport=transport)
 
 
 def pointer_problems(doc: Any) -> list[str]:
     """What is wrong with a pointer document, for a client's checks."""
     if not isinstance(doc, dict):
         return ["the pointer is not a JSON object"]
-    kind = doc.get("provider")
-    if kind not in ("keycloak", "static"):
-        return [f"unknown provider {kind!r} (keycloak, static)"]
-    if kind == "keycloak" and not doc.get("issuer"):
-        return ['a "keycloak" pointer needs an "issuer"']
-    if kind == "static":
-        return ['the "static" provider verifies nobody: for tests only']
-    return []
+    try:
+        cls = provider_class(str(doc.get("provider") or ""))
+    except ProviderError as err:
+        return [str(err)]
+    return list(cls.problems(doc))
+
+
+def __getattr__(name: str) -> Any:
+    """The built-in providers, still importable from here."""
+    if name == "KeycloakProvider":
+        from catalyst_users.providers.keycloak import KeycloakProvider
+
+        return KeycloakProvider
+    if name == "StaticProvider":
+        from catalyst_users.providers.static import StaticProvider
+
+        return StaticProvider
+    raise AttributeError(name)

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import secrets
+import sys
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -15,6 +21,7 @@ from catalyst_users.errors import AdminError, OIDCError
 from catalyst_users.fastapi_auth import KeycloakAuth
 from catalyst_users.identity import Identity
 from catalyst_users.oidc import OIDCClient
+from catalyst_users.providers.keycloak import KeycloakProvider
 from catalyst_users.session import Session
 from tests.integration.conftest import approve_device, bootstrap_token, password_token
 
@@ -130,3 +137,37 @@ def test_provisioned_grants_reach_the_token(settings):
     assert {"create", "freeze", "share"} <= set(who.commands) and who.reconciliation == "full"
     alice = whoami_from_claims(OIDCClient(settings).userinfo(password_token("alice")), settings.issuer, "catalyst")
     assert set(alice.commands) == {"create", "status"} and alice.reconciliation == "propose"
+
+
+def test_the_system_client_signs_in_with_client_credentials(settings):
+    """catalyst-system (env-LOCAL-000003): its generated secret gets a token for the service account, nothing else."""
+    admin = KeycloakAdmin(settings, bootstrap_token)
+    client = admin._call("GET", "/clients", params={"clientId": "catalyst-system"}).json()[0]["id"]
+    secret = admin._call("GET", f"/clients/{client}/client-secret").json()["value"]
+    url = f"{settings.issuer}/protocol/openid-connect/token"
+    form = urllib.parse.urlencode(
+        {"grant_type": "client_credentials", "client_id": "catalyst-system", "client_secret": secret}
+    ).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, data=form), timeout=10) as resp:  # noqa: S310 - loopback
+        token = json.load(resp)["access_token"]
+    claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
+    assert claims["azp"] == "catalyst-system" and claims["iss"] == settings.issuer
+    assert "catalyst-api" in ([claims["aud"]] if isinstance(claims["aud"], str) else claims["aud"])
+    wrong = urllib.parse.urlencode(
+        {"grant_type": "client_credentials", "client_id": "catalyst-system", "client_secret": "wrong"}
+    ).encode()
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(urllib.request.Request(url, data=wrong), timeout=10)  # noqa: S310 - loopback
+    assert refused.value.code == 401
+
+
+def test_the_keycloak_provider_signs_the_system_account_in(settings, monkeypatch):
+    """The facade's system sign-in (id-AUTH-000006): the secret comes from secret_command, here reading the env."""
+    admin = KeycloakAdmin(settings, bootstrap_token)
+    client = admin._call("GET", "/clients", params={"clientId": "catalyst-system"}).json()[0]["id"]
+    monkeypatch.setenv("IT_SYSTEM_SECRET", admin._call("GET", f"/clients/{client}/client-secret").json()["value"])
+    command = [sys.executable, "-c", "import os; print(os.environ['IT_SYSTEM_SECRET'])"]
+    provider = KeycloakProvider(issuer=settings.issuer, secret_command=command)
+    who = provider.system_whoami()
+    assert who.username == "service-account-catalyst-system" and who.issuer == settings.issuer
+    assert provider.system_token()["access_token"]

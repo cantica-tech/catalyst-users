@@ -1,7 +1,9 @@
 # catalyst-users
 
-Users, groups and roles from **Keycloak**, over standard OIDC: a small
-standard-library-only Python core, a `catalyst-users` command line, and a
+A command-line **facade to an identity provider**: users, groups, roles and
+sign-in, whatever manages them. Keycloak is the built-in provider; others are
+registered by installed packages ([Providers](#providers)). A small
+standard-library-only Python core, the `catalyst-users` command line, and a
 FastAPI integration.
 
 This is stage one of moving users and groups out of catalyst criteria
@@ -49,21 +51,77 @@ uv run python keycloak/set_admin.py --email you@example.com
 
 ## The command line
 
+Every command goes through the configured provider ([Configuration](#configuration)).
+
 | Command | What it does |
 | --- | --- |
+| `providers` | The registered providers, and where each comes from. |
 | `login` | Device login: shows a link and a code, waits for you to approve in the browser. No password passes through catalyst-users. |
-| `whoami [--json]` | Your username, subject, issuer, groups, roles and catalyst grants. |
-| `token` | Prints a fresh access token, to pass to an API. Keep it secret. |
+| `whoami [--json] [--system]` | Your username, subject, issuer, groups, roles and catalyst grants; with `--system`, the local system account's. |
+| `token [--json] [--system]` | Prints a fresh access token, to pass to an API; with `--system`, the local system account's ([below](#the-local-system-account)). Keep it secret. |
 | `logout` | Revokes your session at Keycloak and deletes the local credentials. |
 | `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `disable NAME`, `enable NAME`, `groups NAME`, `import FILE --roles FILE` | Users. They are disabled, never deleted. `import` brings a catalyst `users.json` in, without passwords. |
 | `groups list`, `add PATH`, `members PATH`, `add-member PATH NAME`, `remove-member PATH NAME`, `grant-role PATH ROLE` | Nested groups. `add /a/b/c` creates any missing parents. |
 | `roles list`, `add NAME [--description D]`, `grant NAME ROLE`, `provision FILE [--login-client C]` | Realm roles. `provision` writes a catalyst roles document: each role and what it may run (below). |
 
-Global options: `--server`, `--realm`, `--client-id`, `--json`. Exit codes:
+Global options: `--pointer FILE`, `--json`, and Keycloak's `--server`, `--realm`, `--client-id`. Exit codes:
 0 done, 1 refused or failed, 2 usage.
 
 Directory commands act with **your own** token: Keycloak decides what your
 account may change. catalyst-users holds no admin secret.
+
+## Providers
+
+A provider is a class registered under a name; a pointer names it (`id-PROVIDER-000005`).
+
+- **Built in**: the modules of `catalyst_users.providers`: `keycloak`, and `static` (tests only).
+- **Registered by a package**: an entry point in the group `catalyst_users.providers`. It never replaces a built-in
+  provider of the same name.
+
+```toml
+# the pyproject.toml of a package that adds a provider
+[project.entry-points."catalyst_users.providers"]
+acme = "acme_identity.provider:AcmeProvider"
+```
+
+The class builds itself from a pointer and checks one, and implements the operations of
+`catalyst_users.provider.Provider`. An operation it cannot do raises `ProviderError`
+(`catalyst_users.provider.unsupported(kind, what)` words it):
+
+```python
+@dataclass
+class AcmeProvider:
+    tenant: str
+    kind: str = "acme"
+    issuer: str = "https://acme.example.com"
+
+    @classmethod
+    def from_pointer(cls, doc, store=None, transport=None):
+        return cls(tenant=doc["tenant"])
+
+    @staticmethod
+    def problems(doc):
+        return [] if doc.get("tenant") else ['an "acme" pointer needs a "tenant"']
+
+    def whoami(self, username=None) -> Whoami: ...
+
+    # login, logout, token, users, groups, roles, directory, provision_roles, import_users,
+    # system_token, system_whoami
+```
+
+## The local system account
+
+The account a client such as catalyst uses locally, on the system's behalf, is a machine identity, never a person
+(`id-AUTH-000006`). `catalyst-users token --system` prints its access token, and `whoami --system` says who it is.
+Keycloak's is the service account of the confidential client `catalyst-system` (client credentials grant). Its secret
+is the first line `secret_command` prints, run without a shell. It is never stored or printed.
+
+On the dev realm, `keycloak/set_system_client.py` creates the client from `keycloak/realm-catalyst.json` and keeps the
+secret Keycloak generated in the keychain (`env-LOCAL-000003`):
+
+```sh
+uv run python keycloak/set_system_client.py [--role catalyst-admin]   # roles for its service account
+```
 
 ## The facade, and catalyst's grants
 
@@ -125,9 +183,23 @@ A runnable example is in [examples/api.py](examples/api.py).
 
 ## Configuration
 
-Settings come from (lowest precedence first): built-in defaults, then
-`~/.catalyst-users/config.toml`, then environment variables, then command-line
-flags.
+The provider is chosen by a pointer: `--pointer FILE` (JSON) or `CATALYST_USERS_POINTER`, else `config.toml`'s
+`provider` with its table, else the local dev Keycloak.
+
+```toml
+# ~/.catalyst-users/config.toml
+provider = "keycloak"
+
+[keycloak]
+issuer = "http://localhost:8080/realms/catalyst"
+client = "catalyst-cli"
+system_client = "catalyst-system"
+secret_command = "security find-generic-password -s catalyst-system@catalyst-users -w"
+```
+
+Keycloak's settings also come from (lowest precedence first): built-in defaults, then
+`config.toml`'s top-level keys, then environment variables, then command-line
+flags. Given explicitly (environment or flags), they win over the `[keycloak]` table.
 
 | Setting | Environment | Default |
 | --- | --- | --- |
@@ -185,7 +257,7 @@ request:
 
 | Path | What |
 | --- | --- |
-| `src/catalyst_users/` | `config`, `http`, `oidc`, `identity`, `credentials`, `session`, `admin`, `cli` (stdlib only) and `fastapi_auth` (the `fastapi` extra) |
+| `src/catalyst_users/` | `config`, `http`, `oidc`, `identity`, `credentials`, `session`, `admin`, `provider` (the facade and its registry), `providers/` (the built-in providers), `cli` (stdlib only) and `fastapi_auth` (the `fastapi` extra) |
 | `tests/` | Unit tests with a fake transport; `tests/integration/` runs against Keycloak |
 | `keycloak/realm-catalyst.json` | The dev realm: clients, mappers, roles, groups, users |
 | `compose.yaml` | The pinned local Keycloak |
