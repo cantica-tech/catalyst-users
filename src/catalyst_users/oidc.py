@@ -173,6 +173,20 @@ class OIDCClient:
 
     # --- tokens (id-AUTH-000003) ---------------------------------------------
 
+    # --- the local system account (id-AUTH-000006) -----------------------------
+
+    def client_credentials(self, client_id: str, secret: str, scope: str = "openid") -> Tokens:
+        """A token for a confidential client's own service account; the secret travels only in this request."""
+        resp = self.http.request(
+            "POST",
+            self.endpoints.token,
+            form={"grant_type": "client_credentials", "scope": scope},
+            basic=(client_id, secret),
+        )
+        if not resp.ok:
+            raise _error(resp)
+        return Tokens.from_response(resp.json(), self.clock())
+
     def refresh(self, tokens: Tokens) -> Tokens:
         if not tokens.refresh_token:
             raise OIDCError("invalid_grant", "no refresh token")

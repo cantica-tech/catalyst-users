@@ -103,6 +103,6 @@ def oidc(settings: Settings, transport: FakeTransport, clock: Clock) -> OIDCClie
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("CATALYST_USERS_HOME", str(tmp_path / "home"))
-    for name in ("SERVER", "REALM", "CLIENT_ID", "API_CLIENT_ID", "API_CLIENT_SECRET", "TIMEOUT"):
+    for name in ("SERVER", "REALM", "CLIENT_ID", "API_CLIENT_ID", "API_CLIENT_SECRET", "TIMEOUT", "POINTER"):
         monkeypatch.delenv(f"CATALYST_USERS_{name}", raising=False)
     return tmp_path / "home"

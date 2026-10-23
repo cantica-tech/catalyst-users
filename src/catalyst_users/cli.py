@@ -1,4 +1,7 @@
-"""`catalyst-users`: log in, see who you are, and manage the directory.
+"""`catalyst-users`: a command-line facade to an identity provider (id-PROVIDER-000001, id-PROVIDER-000005).
+
+Log in, see who you are, sign in as the local system account, and manage the directory, whatever the provider:
+the built-in `keycloak` (and `static`, for tests), or one an installed package registers. `providers` lists them.
 
 Exit codes: 0 done, 1 refused or failed, 2 usage.
 """
@@ -14,25 +17,30 @@ from pathlib import Path
 from typing import Any
 
 from catalyst_users import __version__, config
-from catalyst_users.admin import KeycloakAdmin
 from catalyst_users.errors import CatalystUsersError
-from catalyst_users.oidc import DeviceCode, OIDCClient
-from catalyst_users.session import Session
+from catalyst_users.oidc import DeviceCode
+from catalyst_users.provider import Provider, Whoami, from_pointer, registered
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="catalyst-users", description=(__doc__ or "").splitlines()[0])
     p.add_argument("--version", action="version", version=f"catalyst-users {__version__}")
-    p.add_argument("--server", dest="server_url", help="identity provider URL (default: http://localhost:8080)")
-    p.add_argument("--realm", help="realm (default: catalyst)")
-    p.add_argument("--client-id", help="public client for login (default: catalyst-cli)")
+    p.add_argument(
+        "--pointer", help="a pointer document (JSON) naming the provider and its settings (default: config.toml's)"
+    )
+    p.add_argument("--server", dest="server_url", help="keycloak: the server URL (default: http://localhost:8080)")
+    p.add_argument("--realm", help="keycloak: the realm (default: catalyst)")
+    p.add_argument("--client-id", help="keycloak: the public client for login (default: catalyst-cli)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     sub = p.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("providers", help="the registered providers")
     sub.add_parser("login", help="log in with a code shown in your browser")
     sub.add_parser("logout", help="revoke your session and delete local credentials")
-    sub.add_parser("whoami", help="who you are: groups and roles")
-    sub.add_parser("token", help="print a fresh access token (keep it secret)")
+    w = sub.add_parser("whoami", help="who you are: groups and roles")
+    w.add_argument("--system", action="store_true", help="the local system account instead (signs it in)")
+    t = sub.add_parser("token", help="print a fresh access token (keep it secret)")
+    t.add_argument("--system", action="store_true", help="the local system account's (client credentials)")
 
     users = sub.add_parser("users", help="users").add_subparsers(dest="action", required=True)
     u = users.add_parser("list", help="list users")
@@ -88,49 +96,69 @@ def _out(args: argparse.Namespace, data: Any, text: str) -> None:
     print(json.dumps(data, indent=2) if args.json else text)
 
 
+def _provider(args: argparse.Namespace) -> Provider:
+    overrides = {"server_url": args.server_url, "realm": args.realm, "client_id": args.client_id}
+    return from_pointer(config.pointer(overrides, pointer_file=args.pointer))
+
+
+def _whoami(args: argparse.Namespace, who: Whoami) -> None:
+    data = {**who.signer(), "email": who.email, "groups": list(who.groups), "roles": list(who.roles)}
+    data["grants"] = list(who.grants)
+    text = "\n".join(
+        [
+            f"{who.username} ({who.name})",
+            f"  subject  {who.subject}",
+            f"  issuer   {who.issuer}",
+            f"  groups   {', '.join(who.groups) or '-'}",
+            f"  roles    {', '.join(who.roles) or '-'}",
+            f"  grants   {', '.join(who.grants) or '-'}",
+        ]
+    )
+    _out(args, data, text)
+
+
 def _run(args: argparse.Namespace) -> int:
-    settings = config.load({"server_url": args.server_url, "realm": args.realm, "client_id": args.client_id})
-    session = Session(OIDCClient(settings))
+    if args.command == "providers":
+        found = registered()
+        _out(
+            args,
+            [{"name": r.name, "target": r.target, "source": r.source} for r in found.values()],
+            "\n".join(f"{r.name:<12} {r.source:<12} {r.target}" for r in found.values()),
+        )
+        return 0
+    provider = _provider(args)
 
     if args.command == "login":
-        who = session.login(_show_code)
+        who = provider.login(_show_code)
         _out(args, who.signer(), f"Logged in as {who.username} ({who.name}).")
         return 0
     if args.command == "logout":
-        warning = session.logout()
+        warning = provider.logout()
         if warning:
             print(f"catalyst-users: warning: {warning}", file=sys.stderr)
         print("Logged out.")
         return 0
     if args.command == "whoami":
-        who = session.identity()
-        from catalyst_users.provider import whoami_from_claims
-
-        claims = session.oidc.userinfo(session.access_token())
-        grants = list(whoami_from_claims(claims, settings.issuer, settings.catalyst_client).grants)
-        data = {**who.signer(), "email": who.email, "groups": list(who.groups), "roles": list(who.roles)}
-        data["grants"] = grants
-        text = "\n".join(
-            [
-                f"{who.username} ({who.name})",
-                f"  subject  {who.subject}",
-                f"  issuer   {who.issuer}",
-                f"  groups   {', '.join(who.groups) or '-'}",
-                f"  roles    {', '.join(who.roles) or '-'}",
-                f"  grants   {', '.join(grants) or '-'}",
-            ]
-        )
-        _out(args, data, text)
+        _whoami(args, provider.system_whoami() if args.system else provider.whoami())
         return 0
     if args.command == "token":
-        print(session.access_token())  # printed only on this explicit request (id-AUTH-000002)
+        if args.system:  # printed only on this explicit request (id-AUTH-000002, id-AUTH-000006)
+            token = provider.system_token()
+            _out(args, token, token["access_token"])
+        else:
+            print(provider.token())  # printed only on this explicit request (id-AUTH-000002)
         return 0
 
-    admin = KeycloakAdmin(settings, session.access_token)
-    return {"users": _users, "groups": _groups, "roles": _roles}[args.command](args, admin)
+    return {"users": _users, "groups": _groups, "roles": _roles}[args.command](args, provider)
 
 
-def _users(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
+def _users(args: argparse.Namespace, provider: Provider) -> int:
+    if args.action == "import":
+        users = _read_list(args.file, "users")
+        report = provider.import_users(users, _read_list(args.roles, "roles"))
+        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
+        return 0
+    admin = provider.directory()
     if args.action == "list":
         users = admin.list_users(args.search)
         rows = [f"{u.username:<20} {'enabled ' if u.enabled else 'DISABLED'} {u.name}" for u in users]
@@ -145,12 +173,6 @@ def _users(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
     elif args.action == "groups":
         paths = admin.user_groups(args.username)
         _out(args, paths, "\n".join(paths) or "(no groups)")
-    elif args.action == "import":
-        from catalyst_users import provision
-
-        users = _read_list(args.file, "users")
-        report = provision.import_users(admin, users, _read_list(args.roles, "roles"))
-        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
     return 0
 
 
@@ -165,7 +187,8 @@ def _read_list(path: str, key: str) -> list:
     return items
 
 
-def _groups(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
+def _groups(args: argparse.Namespace, provider: Provider) -> int:
+    admin = provider.directory()
     if args.action == "list":
         groups = admin.groups()
         rows = [
@@ -191,7 +214,14 @@ def _groups(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
     return 0
 
 
-def _roles(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
+def _roles(args: argparse.Namespace, provider: Provider) -> int:
+    if args.action == "provision":
+        report = provider.provision_roles(
+            _read_list(args.file, "roles"), args.catalyst_client, tuple(args.login_client or ("catalyst-cli",))
+        )
+        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
+        return 0
+    admin = provider.directory()
     if args.action == "list":
         roles = admin.roles()
         _out(args, [{"name": n, "description": d} for n, d in roles], "\n".join(f"{n:<20} {d}" for n, d in roles))
@@ -201,13 +231,6 @@ def _roles(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
     elif args.action == "grant":
         admin.grant_role_to_user(args.username, args.role)
         _out(args, {"ok": True}, f"{args.username} holds {args.role}.")
-    elif args.action == "provision":
-        from catalyst_users import provision
-
-        report = provision.provision(
-            admin, _read_list(args.file, "roles"), args.catalyst_client, tuple(args.login_client or ("catalyst-cli",))
-        )
-        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
     return 0
 
 
