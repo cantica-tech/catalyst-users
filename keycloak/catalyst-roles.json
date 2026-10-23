@@ -1,0 +1,96 @@
+{
+  "roles": [
+    {
+      "name": "Product Owner",
+      "actions": [
+        "create the active module's planning and new-work artifacts",
+        "approve/prioritize new work",
+        "/create",
+        "/status",
+        "/adopt",
+        "/journal"
+      ],
+      "reconciliation": "propose",
+      "id": "product-owner"
+    },
+    {
+      "name": "Scrum Master / Delivery Lead",
+      "actions": [
+        "review the active module's open work",
+        "/status",
+        "/journal"
+      ],
+      "reconciliation": "propose",
+      "id": "scrum-master"
+    },
+    {
+      "name": "Tech Lead / Architect",
+      "actions": [
+        "approve rule changes and new domains",
+        "vet a development artifact's rule target(s)",
+        "/create",
+        "/status",
+        "/adopt",
+        "/journal",
+        "/freeze",
+        "/migrate-definition",
+        "/run-analysis"
+      ],
+      "reconciliation": "full",
+      "id": "tech-lead"
+    },
+    {
+      "name": "Developer",
+      "actions": [
+        "create the active module's development artifacts (implementation-driven)",
+        "implement the active module's development artifacts",
+        "/create",
+        "/status",
+        "/adopt",
+        "/journal",
+        "/run-analysis"
+      ],
+      "reconciliation": "propose",
+      "id": "developer"
+    },
+    {
+      "name": "QA / Tester",
+      "actions": [
+        "report defects through the active module's development artifacts",
+        "verify a rule's verification coverage",
+        "/create",
+        "/status",
+        "/adopt",
+        "/journal"
+      ],
+      "reconciliation": "propose",
+      "id": "qa"
+    },
+    {
+      "name": "Stakeholder",
+      "actions": [
+        "propose ideas and planning items to the active module"
+      ],
+      "reconciliation": "none",
+      "id": "stakeholder"
+    },
+    {
+      "name": "Release Manager",
+      "actions": [
+        "/sync-framework",
+        "/share",
+        "cutting releases"
+      ],
+      "reconciliation": "full",
+      "id": "release-manager"
+    },
+    {
+      "name": "Admin",
+      "actions": [
+        "*"
+      ],
+      "reconciliation": "full",
+      "id": "catalyst-admin"
+    }
+  ]
+}
