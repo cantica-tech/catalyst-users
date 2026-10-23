@@ -52,18 +52,43 @@ uv run python keycloak/set_admin.py --email you@example.com
 | Command | What it does |
 | --- | --- |
 | `login` | Device login: shows a link and a code, waits for you to approve in the browser. No password passes through catalyst-users. |
-| `whoami [--json]` | Your username, subject, issuer, groups and roles. |
+| `whoami [--json]` | Your username, subject, issuer, groups, roles and catalyst grants. |
 | `token` | Prints a fresh access token, to pass to an API. Keep it secret. |
 | `logout` | Revokes your session at Keycloak and deletes the local credentials. |
-| `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `disable NAME`, `enable NAME`, `groups NAME` | Users. They are disabled, never deleted. |
+| `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `disable NAME`, `enable NAME`, `groups NAME`, `import FILE --roles FILE` | Users. They are disabled, never deleted. `import` brings a catalyst `users.json` in, without passwords. |
 | `groups list`, `add PATH`, `members PATH`, `add-member PATH NAME`, `remove-member PATH NAME`, `grant-role PATH ROLE` | Nested groups. `add /a/b/c` creates any missing parents. |
-| `roles list`, `add NAME [--description D]`, `grant NAME ROLE` | Realm roles. |
+| `roles list`, `add NAME [--description D]`, `grant NAME ROLE`, `provision FILE [--login-client C]` | Realm roles. `provision` writes a catalyst roles document: each role and what it may run (below). |
 
 Global options: `--server`, `--realm`, `--client-id`, `--json`. Exit codes:
 0 done, 1 refused or failed, 2 usage.
 
 Directory commands act with **your own** token: Keycloak decides what your
 account may change. catalyst-users holds no admin secret.
+
+## The facade, and catalyst's grants
+
+`catalyst_users.provider` is how a client such as catalyst reaches people,
+whatever manages them. A pointer document chooses the backend:
+
+```json
+{"provider": "keycloak", "issuer": "https://id.example.com/realms/catalyst", "client": "catalyst-cli", "catalyst_client": "catalyst"}
+```
+
+`from_pointer(doc).whoami()` returns who is logged in, with their groups,
+roles and **grants**. A grant is a client role of the `catalyst` client:
+
+- `cmd:<command>` grants a command, and `cmd:*` grants all of them;
+- `reconcile:full` or `reconcile:propose` sets the reconciliation level.
+
+Each catalyst role is a realm role whose composites are the grants it gives,
+and groups give roles. The token carries the effective grants, so no client
+needs an admin secret to know what someone may do.
+
+`catalyst-users roles provision keycloak/catalyst-roles.json` writes catalyst's
+roles into the realm: the realm roles, their grants and the claim mapper. It
+adds and never deletes. A `static` backend, with people declared in the pointer
+and nothing verified, exists for tests only: it is refused unless
+`CATALYST_ALLOW_STATIC_IDENTITY=1`.
 
 ## FastAPI
 

@@ -10,6 +10,7 @@ import getpass
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from catalyst_users import __version__, config
@@ -20,7 +21,7 @@ from catalyst_users.session import Session
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="catalyst-users", description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="catalyst-users", description=(__doc__ or "").splitlines()[0])
     p.add_argument("--version", action="version", version=f"catalyst-users {__version__}")
     p.add_argument("--server", dest="server_url", help="identity provider URL (default: http://localhost:8080)")
     p.add_argument("--realm", help="realm (default: catalyst)")
@@ -66,6 +67,15 @@ def _parser() -> argparse.ArgumentParser:
     r = roles.add_parser("grant", help="grant a realm role to a user")
     r.add_argument("username")
     r.add_argument("role")
+    r = roles.add_parser("provision", help="write a catalyst roles document: roles, their grants, the claim mapper")
+    r.add_argument("file", help="a catalyst roles document (roles.json, or the kernel's roles template)")
+    r.add_argument("--catalyst-client", default="catalyst", help="the client whose roles are the grants")
+    r.add_argument(
+        "--login-client", action="append", help="a client whose tokens carry the grants (default: catalyst-cli)"
+    )
+    u = users.add_parser("import", help="import a catalyst users document (no passwords; never deletes)")
+    u.add_argument("file", help="a catalyst users document (users.json)")
+    u.add_argument("--roles", required=True, help="its roles document, to map role names to realm roles")
     return p
 
 
@@ -94,7 +104,12 @@ def _run(args: argparse.Namespace) -> int:
         return 0
     if args.command == "whoami":
         who = session.identity()
+        from catalyst_users.provider import whoami_from_claims
+
+        claims = session.oidc.userinfo(session.access_token())
+        grants = list(whoami_from_claims(claims, settings.issuer, settings.catalyst_client).grants)
         data = {**who.signer(), "email": who.email, "groups": list(who.groups), "roles": list(who.roles)}
+        data["grants"] = grants
         text = "\n".join(
             [
                 f"{who.username} ({who.name})",
@@ -102,6 +117,7 @@ def _run(args: argparse.Namespace) -> int:
                 f"  issuer   {who.issuer}",
                 f"  groups   {', '.join(who.groups) or '-'}",
                 f"  roles    {', '.join(who.roles) or '-'}",
+                f"  grants   {', '.join(grants) or '-'}",
             ]
         )
         _out(args, data, text)
@@ -129,7 +145,24 @@ def _users(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
     elif args.action == "groups":
         paths = admin.user_groups(args.username)
         _out(args, paths, "\n".join(paths) or "(no groups)")
+    elif args.action == "import":
+        from catalyst_users import provision
+
+        users = _read_list(args.file, "users")
+        report = provision.import_users(admin, users, _read_list(args.roles, "roles"))
+        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
     return 0
+
+
+def _read_list(path: str, key: str) -> list:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CatalystUsersError(f"cannot read {path}: {exc}") from None
+    items = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise CatalystUsersError(f"{path} has no `{key}` list")
+    return items
 
 
 def _groups(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
@@ -168,6 +201,13 @@ def _roles(args: argparse.Namespace, admin: KeycloakAdmin) -> int:
     elif args.action == "grant":
         admin.grant_role_to_user(args.username, args.role)
         _out(args, {"ok": True}, f"{args.username} holds {args.role}.")
+    elif args.action == "provision":
+        from catalyst_users import provision
+
+        report = provision.provision(
+            admin, _read_list(args.file, "roles"), args.catalyst_client, tuple(args.login_client or ("catalyst-cli",))
+        )
+        _out(args, report.__dict__, f"{len(report.created)} created, {len(report.kept)} already there")
     return 0
 
 

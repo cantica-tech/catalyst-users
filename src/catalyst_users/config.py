@@ -28,6 +28,7 @@ class Settings:
     api_client_id: str = "catalyst-api"
     api_client_secret: str | None = field(default=None, repr=False)
     timeout: float = 10.0
+    catalyst_client: str = "catalyst"  # the client whose roles are catalyst grants (id-PROVIDER-000002)
 
     @property
     def issuer(self) -> str:
@@ -45,6 +46,7 @@ _ENV = {
     "api_client_id": "API_CLIENT_ID",
     "api_client_secret": "API_CLIENT_SECRET",
     "timeout": "TIMEOUT",
+    "catalyst_client": "CATALYST_CLIENT",
 }
 
 
