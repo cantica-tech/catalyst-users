@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1 — 2026-10-23
+
+- Fixed: `Tokens.from_dict` passes only the fields stored, so a type checker sees no `None` where a string or a
+  number is required (no behaviour change).
+- Changed: the dev Keycloak keeps its database in `.keycloack/` (never in git), so users survive a recreate; the
+  realm file seeds a first start only.
+- Added: `keycloak/set_admin.py` makes the owner the dev realm's only admin, reading their username and password
+  from the macOS keychain; the realm file no longer makes a dev user an admin, and the integration tests use
+  Keycloak's bootstrap admin.
+
 ## 0.1.0 — 2026-10-23
 
 The first release: stage one of moving users and groups out of catalyst criteria.
