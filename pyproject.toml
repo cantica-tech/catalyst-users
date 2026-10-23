@@ -1,6 +1,6 @@
 [project]
 name = "catalyst-users"
-version = "0.1.0"
+version = "0.1.1"
 description = "Users, groups and roles from Keycloak over standard OIDC: a stdlib-only core, a simple CLI and a FastAPI integration"
 readme = "README.md"
 authors = [

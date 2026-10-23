@@ -16,7 +16,7 @@ from catalyst_users.fastapi_auth import KeycloakAuth
 from catalyst_users.identity import Identity
 from catalyst_users.oidc import OIDCClient
 from catalyst_users.session import Session
-from tests.integration.conftest import approve_device, password_token
+from tests.integration.conftest import approve_device, bootstrap_token, password_token
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def test_introspection_rejects_garbage(oidc):
 
 
 def test_directory_changes_with_an_admins_own_token(settings):
-    admin = KeycloakAdmin(settings, lambda: password_token("ada"))
+    admin = KeycloakAdmin(settings, bootstrap_token)
     suffix = secrets.token_hex(3)
     username, path = f"it-user-{suffix}", f"/it-{suffix}/team"
 

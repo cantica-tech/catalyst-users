@@ -21,16 +21,30 @@ uv run catalyst-users whoami
 ```
 
 The realm in [keycloak/realm-catalyst.json](keycloak/realm-catalyst.json)
-is **for development only**. It has three users (`alice`, `bob`, `ada`; each
-password is `dev-only-<name>-password`), a nested group tree, and roles
-that mirror catalyst's:
+is **for development only**. It seeds Keycloak's first start: three users
+(`alice`, `bob`, `ada`; each password is `dev-only-<name>-password`), a
+nested group tree, and roles that mirror catalyst's:
 
 ```text
-cantica-tech            [stakeholder]
+cantica-tech            [stakeholder]                  ada
   catalyst
     developers          [developer]                    alice
     maintainers         [release-manager, tech-lead]   bob
-catalyst-admins         [catalyst-admin, realm-admin]  ada
+catalyst-admins         [catalyst-admin, realm-admin]  (the owner, below)
+```
+
+Keycloak keeps its database in `.keycloack/` on the host (never in git), so
+users and changes survive `docker compose up -d --force-recreate`; delete
+that directory to start again from the realm file.
+
+The realm's admin is you, never a dev user. `keycloak/set_admin.py` reads your
+username and password from the macOS keychain (the item whose service is
+`osteck@catalyst-users`, or `--service`), creates or updates you in the realm,
+and makes you the only member of `catalyst-admins`. Nothing it reads is
+written or printed:
+
+```sh
+uv run python keycloak/set_admin.py --email you@example.com
 ```
 
 ## The command line
@@ -131,7 +145,7 @@ Keycloak builds its issuer from the host you call: use the same host
 uv run ruff check && uv run ruff format --check
 uv run pytest                                   # unit tests, no network
 CATALYST_USERS_IT=1 uv run pytest               # also against the compose Keycloak
-docker compose up -d --force-recreate           # reset the dev realm (integration runs leave it-* users)
+rm -rf .keycloack && docker compose up -d --force-recreate   # reset the dev realm (integration runs leave it-* users)
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push to `development` and every pull
