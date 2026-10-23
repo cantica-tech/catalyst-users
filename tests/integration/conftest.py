@@ -49,6 +49,20 @@ def password_token(username: str, client_id: str = "catalyst-tests") -> str:
         return json.load(resp)["access_token"]
 
 
+def bootstrap_token() -> str:
+    """The dev bootstrap admin of realm `master` (compose.yaml), who administers every realm (env-LOCAL-000002)."""
+    form = {
+        "grant_type": "password",
+        "client_id": "admin-cli",
+        "username": "admin",
+        "password": "dev-only-admin-password",
+    }
+    url = f"{SERVER}/realms/master/protocol/openid-connect/token"
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(form).encode())  # noqa: S310 - loopback test server
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+        return json.load(resp)["access_token"]
+
+
 def approve_device(code: DeviceCode, username: str) -> None:
     """What a person does in the browser: open the link, sign in, grant access."""
     policy = http.cookiejar.DefaultCookiePolicy()
