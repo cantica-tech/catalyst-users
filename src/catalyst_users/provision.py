@@ -8,6 +8,9 @@ A role (`name`, optional `id` or `provider_role`, `actions`, `reconciliation`) b
   named `Admin` grants `cmd:*`) and per reconciliation level (`reconcile:full`, `reconcile:propose`);
 - the realm role a composite of those client roles.
 
+A role scoped to a criterion (`"scope": "criterion"`, the `criterion-admin`) is a realm role with no grants
+(id-DIR-000005).
+
 The catalyst client is created if missing, and each login client gets the mapper that puts the catalyst client's
 roles into userinfo, the access token and introspection. Everything is added if missing; nothing is deleted.
 """
@@ -34,7 +37,11 @@ def role_id(role: dict[str, Any]) -> str:
 
 
 def grants_of(role: dict[str, Any]) -> list[str]:
-    """The client roles a catalyst role grants: its commands and its reconciliation level."""
+    """The client roles a catalyst role grants: its commands and its reconciliation level. A role scoped to a
+    criterion (`"scope": "criterion"`) grants none: a grant would hold in every criterion, so its rights come from
+    the criteria its holder administers (id-DIR-000005)."""
+    if str(role.get("scope") or "") == "criterion":
+        return []
     out: set[str] = set()
     for action in role.get("actions") or ():
         text = str(action).strip()

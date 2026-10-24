@@ -86,10 +86,12 @@ class KeycloakProvider:
         ask_server_admin: Callable[[], tuple[str, str]],
         transport: Any = None,
         ask_profile: Callable[[], dict[str, str]] | None = None,
+        criteria: tuple[str, ...] = (),
     ) -> SetupOutcome:
         """Check the realm at the URL: unreachable, keep the JSON; missing, create it and its admin (their profile,
         `email`, `first_name`, `last_name`, from `ask_profile`: Keycloak signs no one in without it), then sign in;
-        present, sign in only. A refused sign-in raises, so nothing is written."""
+        present, sign in only. A refused sign-in raises, so nothing is written. Signed in, the realm is readied for
+        criteria, and each of `criteria` added with the admin appointed (id-PROVIDER-000008)."""
         from catalyst_users.http import Http, check_url
 
         url = str(settings.get("url") or "").rstrip("/")
@@ -124,10 +126,24 @@ class KeycloakProvider:
         elif not resp.ok:
             raise ProviderError(f"Keycloak answered HTTP {resp.status} for the realm {realm} at {url}")
         provider = cls.from_pointer({**stored, "username": username}, transport=transport)
-        provider._sign_in(password)
+        tokens = provider._sign_in(password)
+        from catalyst_users.admin import KeycloakAdmin
+
+        admin = KeycloakAdmin(_AdminSettings(f"{url}/admin/realms/{realm}", timeout), lambda: tokens.access_token, http)  # type: ignore[arg-type]
+        try:
+            readied = admin.prepare_criteria()
+            for name in criteria:
+                readied += _add_criterion(admin, name, username)
+        except CatalystUsersError as err:
+            raise ProviderError(
+                f"{username} is signed in, but the realm {realm} is not ready for criteria: {err}"
+            ) from None
+        done = f"; criteria: {', '.join(readied)}" if readied else ""
         if created:
-            return SetupOutcome("created", stored, f"created the realm {realm} and its admin {username}, signed in")
-        return SetupOutcome("authenticated", stored, f"the realm {realm} exists: signed {username} in")
+            return SetupOutcome(
+                "created", stored, f"created the realm {realm} and its admin {username}, signed in{done}"
+            )
+        return SetupOutcome("authenticated", stored, f"the realm {realm} exists: signed {username} in{done}")
 
     # --- people --------------------------------------------------------------------------
     def _oidc(self, client: str | None = None):
@@ -189,6 +205,19 @@ class KeycloakProvider:
         from catalyst_users import provision
 
         return provision.import_users(self.directory(), users, roles)
+
+    # --- criteria (id-DIR-000005, id-PROVIDER-000008) -----------------------------------------
+    def criteria(self) -> list[dict[str, Any]]:
+        return self.directory().criteria()
+
+    def add_criterion(self, name: str, admin: str | None = None) -> list[str]:
+        return _add_criterion(self.directory(), name, admin)
+
+    def appoint(self, name: str, username: str) -> None:
+        self.directory().appoint(name, username)
+
+    def dismiss(self, name: str, username: str) -> None:
+        self.directory().dismiss(name, username)
 
     # --- the local system account: setup's admin (id-AUTH-000006) ---------------------------
     def _sign_in(self, password: str, oidc: Any = None):
@@ -295,6 +324,14 @@ def _create_realm(
         admin.add_member(str(settings.get("admin_group") or DEFAULT_ADMIN_GROUP), username)
     except CatalystUsersError as err:
         raise ProviderError(f"the realm {realm} was created, but not its admin {username}: {err}") from None
+
+
+def _add_criterion(admin: Any, name: str, appointee: str | None) -> list[str]:
+    added = admin.add_criterion(name)
+    if appointee:
+        admin.appoint(name, appointee)
+        added.append(f"{appointee} administers {name}")
+    return added
 
 
 def _issuer(doc: dict[str, Any]) -> str:

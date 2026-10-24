@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 — 2026-10-24
+
+Criteria and their admins: the `criterion-admin` (REQ-000009).
+
+- Added: two admin roles, whatever the provider. The `catalyst-admin` administers every criterion and the
+  directory; a `criterion-admin` administers only the criteria they were appointed to (every catalyst command there,
+  and the membership of that criterion's groups, its admins included), never a user, a group or a role.
+- Added: `whoami` reports `administers`, the criteria someone administers. It is never a grant: a `cmd:` grant would
+  hold in every criterion. The `Criterion Admin` role (`"scope": "criterion"`) is provisioned with no grant.
+- Added: the facade's `criteria`, `add_criterion`, `appoint` and `dismiss`, and `catalyst-users criteria list | add |
+  admins | appoint | dismiss`. Keycloak: a criterion is `/criteria/<name>`, its admins `/criteria/<name>/admins`
+  (holding `criterion-admin`), confined by the realm's fine-grained admin permissions; `static` reports criteria
+  from its people and changes none.
+- Changed: setup readies the realm for criteria (the role, `/criteria`, fine-grained admin permissions; only what is
+  missing) and `setup --criterion NAME` (repeatable) adds criteria with the admin appointed: onboarding catalyst and
+  each of its criteria. `keycloak/realm-catalyst.json` declares them.
+- Added: `docs/onboarding.md`, a greenfield onboarding from one JSON document, and its end-to-end test against a
+  Keycloak of its own (`tests/integration/onboarding`), which proves a criterion-admin's confinement.
+
 ## 0.4.1 — 2026-10-24
 
 - Fixed: typing only, no behaviour change: the provider table read from `config.toml`, the settings setup stores,
