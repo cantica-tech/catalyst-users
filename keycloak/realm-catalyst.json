@@ -10,6 +10,7 @@
   "accessTokenLifespan": 300,
   "oauth2DeviceCodeLifespan": 600,
   "oauth2DevicePollingInterval": 5,
+  "adminPermissionsEnabled": true,
   "roles": {
     "realm": [
       {
@@ -43,6 +44,10 @@
       {
         "name": "catalyst-admin",
         "description": "catalyst: Admin"
+      },
+      {
+        "name": "criterion-admin",
+        "description": "catalyst: Criterion Admin (every right, in the criteria it administers)"
       }
     ]
   },
@@ -91,6 +96,12 @@
           "realm-admin"
         ]
       },
+      "subGroups": []
+    },
+    {
+      "name": "criteria",
+      "path": "/criteria",
+      "realmRoles": [],
       "subGroups": []
     }
   ],

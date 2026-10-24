@@ -10,12 +10,17 @@ Providers are registered (id-PROVIDER-000005): the built-in ones are modules of 
 `catalyst_users.providers`, never replacing a built-in. `from_pointer` builds the provider; `whoami` says who is logged in, with their groups, roles and grants. A grant is
 a client role of the catalyst client in the token: `cmd:<command>` (`cmd:*` every command) and
 `reconcile:full|propose`. The backend resolves composites and groups, so no client needs an admin secret.
+
+A criterion has admins (id-DIR-000005, id-PROVIDER-000008): `whoami` reports the criteria someone administers
+(`administers`), never as a grant, since a grant would hold in every criterion; a client gives an admin's rights only
+in a criterion that list names.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import re
 import shlex
 import subprocess
 from collections.abc import Callable
@@ -30,10 +35,34 @@ STATIC_FLAG = "CATALYST_ALLOW_STATIC_IDENTITY"
 CMD, RECONCILE = "cmd:", "reconcile:"
 LEVELS = ("none", "propose", "full")
 DEFAULT_CATALYST_CLIENT = "catalyst"
+# Criteria (id-DIR-000005): the realm role of a criterion's admins, and where a group-based provider keeps criteria.
+CRITERION_ADMIN = "criterion-admin"
+CRITERIA_GROUP = "/criteria"
+CRITERION_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 
 class ProviderError(CatalystUsersError):
     """A pointer that names no usable backend."""
+
+
+def criterion_name(name: str) -> str:
+    """A criterion's name as catalyst names a project (`project_name`): lower case, digits, `.`, `_` and `-`."""
+    if not CRITERION_NAME.match(name or ""):
+        raise ProviderError(f"{name!r} is not a criterion name (lower case letters, digits, '.', '_', '-')")
+    return name
+
+
+def administers_from_groups(groups: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """The criteria whose admins group (`/criteria/<name>/admins`) is among `groups`, exactly: a subgroup of it is
+    not an admin."""
+    prefix = CRITERIA_GROUP + "/"
+    found = set()
+    for group in groups:
+        path = "/" + str(group).strip("/")
+        parts = path[len(prefix) :].split("/") if path.startswith(prefix) else []
+        if len(parts) == 2 and parts[0] and parts[1] == "admins":
+            found.add(parts[0])
+    return tuple(sorted(found))
 
 
 @dataclass(frozen=True)
@@ -46,6 +75,11 @@ class Whoami:
     groups: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
     grants: tuple[str, ...] = ()
+    administers: tuple[str, ...] = ()
+
+    def administers_criterion(self, name: str) -> bool:
+        """An admin of the criterion `name` (id-DIR-000005); the catalyst-admin's rights are their grants."""
+        return name in self.administers
 
     @property
     def commands(self) -> tuple[str, ...]:
@@ -77,15 +111,17 @@ def whoami_from_claims(claims: dict[str, Any], issuer: str, catalyst_client: str
     username = str(claims.get("preferred_username") or claims["sub"])
     given = " ".join(p for p in (claims.get("given_name"), claims.get("family_name")) if p)
     access = (claims.get("resource_access") or {}).get(catalyst_client) or {}
+    groups = tuple(sorted("/" + str(g).strip("/") for g in claims.get("groups") or ()))
     return Whoami(
         issuer=str(claims.get("iss") or issuer),
         subject=str(claims["sub"]),
         username=username,
         name=str(claims.get("name") or given or username),
         email=claims.get("email"),
-        groups=tuple(sorted("/" + str(g).strip("/") for g in claims.get("groups") or ())),
+        groups=groups,
         roles=tuple(sorted(str(r) for r in (claims.get("realm_access") or {}).get("roles") or ())),
         grants=tuple(sorted(str(r) for r in access.get("roles") or ())),
+        administers=administers_from_groups(groups),
     )
 
 
@@ -111,8 +147,15 @@ class Provider(Protocol):
     ) -> Any: ...
     def import_users(self, users: list[dict[str, Any]], roles: list[dict[str, Any]]) -> Any: ...
 
+    # criteria and their admins, with the caller's own rights (id-DIR-000005, id-PROVIDER-000008)
+    def criteria(self) -> list[dict[str, Any]]: ...  # [{"name", "admins": [username, …] or None if not visible}]
+    def add_criterion(self, name: str, admin: str | None = None) -> Any: ...
+    def appoint(self, name: str, username: str) -> None: ...
+    def dismiss(self, name: str, username: str) -> None: ...
+
     # the local system account: setup's admin (id-AUTH-000006). A provider class also has
-    # `setup(settings, username, password, ask_server_admin, transport=None) -> SetupOutcome` (id-PROVIDER-000006).
+    # `setup(settings, username, password, ask_server_admin, transport=None, criteria=()) -> SetupOutcome`
+    # (id-PROVIDER-000006): it readies the provider for criteria and adds `criteria`, setup's admin appointed.
     def system_token(self) -> dict[str, Any]: ...
     def system_whoami(self) -> Whoami: ...
 

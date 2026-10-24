@@ -23,6 +23,20 @@ DEFINITION = {"realm": "catalyst", "groups": [{"name": "catalyst-admins"}], "cli
 SIGNED_IN = reply(body={"access_token": "at-owner", "expires_in": 300})
 
 
+@pytest.fixture(autouse=True)
+def ready_realm(transport):
+    """A realm already ready for criteria (id-PROVIDER-000008): setup reads it and changes nothing."""
+    transport.on("GET", ADMIN, reply(body={"realm": "catalyst", "adminPermissionsEnabled": True}))
+    transport.on("GET", f"{ADMIN}/roles", reply(body=[{"name": "criterion-admin"}]))
+    transport.on("GET", f"{ADMIN}/group-by-path/criteria", reply(body={"id": "g-c", "path": "/criteria"}))
+    return transport
+
+
+def _sign_in(transport) -> dict[str, str]:
+    """The form of the last sign-in (readying the realm for criteria follows it)."""
+    return transport.form(max(i for i, r in enumerate(transport.requests) if r.url == f"{OIDC}/token"))
+
+
 def _never_asked() -> tuple[str, str]:
     raise AssertionError("the server admin is asked for only to create a realm")
 
@@ -38,8 +52,34 @@ def test_a_realm_that_exists_is_only_signed_in_to(transport):
         "password_client": "catalyst-admin-cli",
         "catalyst_client": "catalyst",
     }
-    assert transport.form()["grant_type"] == "password" and transport.form()["username"] == "owner"
+    assert _sign_in(transport)["grant_type"] == "password" and _sign_in(transport)["username"] == "owner"
     assert not [url for method, url in transport.calls("POST") if "/admin/" in url]
+
+
+def test_setup_readies_a_realm_for_criteria_and_adds_the_ones_named(transport, monkeypatch):
+    from catalyst_users.admin import KeycloakAdmin
+
+    transport.on("POST", f"{OIDC}/token", SIGNED_IN)
+    realm = {"realm": "catalyst", "displayName": "kept"}
+    transport.on("GET", ADMIN, reply(body=realm))
+    transport.on("PUT", ADMIN, reply(204))
+    transport.on("GET", f"{ADMIN}/roles", reply(body=[{"name": "tech-lead"}]))
+    transport.on("POST", f"{ADMIN}/roles", reply(201))
+    transport.on("GET", f"{ADMIN}/group-by-path/criteria", [reply(404), reply(body={"id": "g-c", "path": "/criteria"})])
+    transport.on("POST", f"{ADMIN}/groups", reply(201))
+    added = []
+    monkeypatch.setattr(KeycloakAdmin, "add_criterion", lambda self, name: added.append(name) or [f"criterion {name}"])
+    monkeypatch.setattr(KeycloakAdmin, "appoint", lambda self, name, user: added.append((name, user)))
+    outcome = KeycloakProvider.setup(
+        {"url": URL}, "owner", "owner-pw", _never_asked, transport, criteria=("catalyst", "catalyst-ui")
+    )
+    put = json.loads(next(r.body for r in transport.requests if r.method == "PUT" and r.url == ADMIN))
+    assert put == {**realm, "adminPermissionsEnabled": True}
+    role = json.loads(next(r.body for r in transport.requests if r.method == "POST" and r.url == f"{ADMIN}/roles"))
+    assert role["name"] == "criterion-admin"
+    assert added == ["catalyst", ("catalyst", "owner"), "catalyst-ui", ("catalyst-ui", "owner")]
+    assert "criteria: fine-grained admin permissions, role criterion-admin, group /criteria" in outcome.note
+    assert "owner administers catalyst-ui" in outcome.note
 
 
 def test_a_refused_sign_in_fails_setup(transport):
@@ -89,7 +129,7 @@ def test_a_missing_realm_is_created_with_its_admin_then_signed_in(transport, tmp
     assert ("PUT", f"{ADMIN}/users/u-1/groups/g-1") in transport.calls()
     user = json.loads(next(r.body for r in transport.requests if r.method == "POST" and r.url == f"{ADMIN}/users"))
     assert (user["email"], user["firstName"], user["lastName"]) == ("o@example.com", "O", "Wner")
-    assert transport.form()["client_id"] == "catalyst-admin-cli"
+    assert _sign_in(transport)["client_id"] == "catalyst-admin-cli"
 
 
 def test_a_missing_realm_needs_a_definition_without_people_or_secrets(transport):

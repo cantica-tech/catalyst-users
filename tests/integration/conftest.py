@@ -50,9 +50,10 @@ def _admin_call(method: str, path: str, body: object = None) -> object:
     return json.loads(raw) if raw else None
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def dev_people() -> None:
-    """Each test person, with their password and group, created when the realm lacks them."""
+    """Each test person, with their password and group, created when the realm lacks them (the compose realm's tests
+    ask for it; the onboarding tests bring a Keycloak of their own)."""
     if os.environ.get("CATALYST_USERS_IT") != "1":
         return
     for username, (first, last, group) in PEOPLE.items():
@@ -108,8 +109,9 @@ def bootstrap_token() -> str:
         return json.load(resp)["access_token"]
 
 
-def approve_device(code: DeviceCode, username: str) -> None:
-    """What a person does in the browser: open the link, sign in, grant access."""
+def approve_device(code: DeviceCode, username: str, password: str | None = None) -> None:
+    """What a person does in the browser: open the link, sign in (with a test person's password unless given), grant
+    access."""
     policy = http.cookiejar.DefaultCookiePolicy()
     policy.secure_protocols = ("https", "wss", "http")  # browsers treat loopback http as secure; urllib does not
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar(policy)))
@@ -117,10 +119,10 @@ def approve_device(code: DeviceCode, username: str) -> None:
     def form_action(page: str, form_id: str | None = None) -> str:
         pattern = rf'<form[^>]*id="{form_id}"[^>]*action="([^"]+)"' if form_id else r'<form[^>]*action="([^"]+)"'
         action = html.unescape(re.search(pattern, page).group(1))
-        return urllib.parse.urljoin(SERVER, action)
+        return urllib.parse.urljoin(code.verification_uri_complete, action)
 
     page = opener.open(code.verification_uri_complete, timeout=10).read().decode()
-    credentials = {"username": username, "password": DEV_PASSWORD.format(username)}
+    credentials = {"username": username, "password": password or DEV_PASSWORD.format(username)}
     page = opener.open(form_action(page, "kc-form-login"), urllib.parse.urlencode(credentials).encode()).read().decode()
     hidden = dict(re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page))
     opener.open(form_action(page), urllib.parse.urlencode({**hidden, "accept": "Yes"}).encode()).read()

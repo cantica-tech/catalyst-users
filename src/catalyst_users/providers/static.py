@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from catalyst_users.provider import STATIC_FLAG, ProviderError, Whoami, unsupported
+from catalyst_users.provider import STATIC_FLAG, ProviderError, Whoami, administers_from_groups, unsupported
 
 
 @dataclass
@@ -19,7 +19,8 @@ class StaticProvider:
     """People declared in the pointer, verified by nothing (id-PROVIDER-000004): for tests only.
 
     `people`: `{username, name, groups, roles}`; `roles`: `{id, name, grants}` (a role's grants are `cmd:…` and
-    `reconcile:…`, as the token would carry them). The logged-in person is the one named, else the only one."""
+    `reconcile:…`, as the token would carry them). The logged-in person is the one named, else the only one. A
+    person administers the criteria of their `/criteria/<name>/admins` groups (id-DIR-000005)."""
 
     issuer: str = "static:"
     people: list[dict[str, Any]] = field(default_factory=list)
@@ -36,7 +37,13 @@ class StaticProvider:
 
     @classmethod
     def setup(
-        cls, settings: dict[str, Any], username: str, password: str, ask_server_admin: Any, transport: Any = None
+        cls,
+        settings: dict[str, Any],
+        username: str,
+        password: str,
+        ask_server_admin: Any,
+        transport: Any = None,
+        **_: Any,
     ):
         raise unsupported("static", "setup")
 
@@ -63,15 +70,17 @@ class StaticProvider:
             raise ProviderError(f"{person['username']} is disabled")
         roles = tuple(sorted(str(r) for r in person.get("roles") or ()))
         grants = {g for r in self.role_defs if str(r.get("id")) in roles for g in r.get("grants") or ()}
+        groups = tuple(sorted(person.get("groups") or ()))
         return Whoami(
             issuer=self.issuer,
             subject=str(person.get("subject") or person["username"]),
             username=str(person["username"]),
             name=str(person.get("name") or person["username"]),
             email=person.get("email"),
-            groups=tuple(sorted(person.get("groups") or ())),
+            groups=groups,
             roles=roles,
             grants=tuple(sorted(grants)),
+            administers=administers_from_groups(groups),
         )
 
     def users(self) -> list[dict[str, Any]]:
@@ -95,6 +104,27 @@ class StaticProvider:
 
     def import_users(self, users: list[dict[str, Any]], roles: list[dict[str, Any]]) -> Any:
         raise unsupported(self.kind, "importing users")
+
+    def criteria(self) -> list[dict[str, Any]]:
+        names = sorted({c for p in self.people for c in administers_from_groups(p.get("groups") or ())})
+        return [
+            {
+                "name": c,
+                "admins": sorted(
+                    p["username"] for p in self.people if c in administers_from_groups(p.get("groups") or ())
+                ),
+            }
+            for c in names
+        ]
+
+    def add_criterion(self, name: str, admin: str | None = None) -> Any:
+        raise unsupported(self.kind, "adding criteria")
+
+    def appoint(self, name: str, username: str) -> None:
+        raise unsupported(self.kind, "appointing admins")
+
+    def dismiss(self, name: str, username: str) -> None:
+        raise unsupported(self.kind, "dismissing admins")
 
     def system_token(self) -> dict[str, Any]:
         raise unsupported(self.kind, "a system account")

@@ -91,6 +91,15 @@
       ],
       "reconciliation": "full",
       "id": "catalyst-admin"
+    },
+    {
+      "name": "Criterion Admin",
+      "actions": [
+        "*"
+      ],
+      "reconciliation": "full",
+      "id": "criterion-admin",
+      "scope": "criterion"
     }
   ]
 }
