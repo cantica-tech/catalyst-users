@@ -289,6 +289,10 @@ CATALYST_USERS_IT=1 uv run pytest               # also against the compose Keycl
 rm -rf .keycloack && docker compose up -d --force-recreate   # reset the dev realm (integration runs leave it-* users)
 ```
 
+The integration tests administer the realm as a `master` admin: compose.yaml's bootstrap admin, or, on a persistent
+dev Keycloak whose bootstrap admin was replaced, the one named by `CATALYST_USERS_IT_ADMIN` with a command printing
+their password in `CATALYST_USERS_IT_ADMIN_PASSWORD_COMMAND` (e.g. a keychain lookup; the password is never shown).
+
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push to `development` and every pull
 request:
 

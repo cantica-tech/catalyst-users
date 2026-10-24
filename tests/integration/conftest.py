@@ -96,12 +96,19 @@ def password_token(username: str, client_id: str = "catalyst-tests") -> str:
 
 
 def bootstrap_token() -> str:
-    """The dev bootstrap admin of realm `master` (compose.yaml), who administers every realm (env-LOCAL-000002)."""
+    """An admin of realm `master`, who administers every realm (env-LOCAL-000002): compose.yaml's bootstrap admin, or
+    the one a persistent dev Keycloak keeps instead, named by CATALYST_USERS_IT_ADMIN with a command printing their
+    password in CATALYST_USERS_IT_ADMIN_PASSWORD_COMMAND (run without a shell; the password is never shown)."""
+    from catalyst_users.provider import secret_from_command
+
+    command = os.environ.get("CATALYST_USERS_IT_ADMIN_PASSWORD_COMMAND")
     form = {
         "grant_type": "password",
         "client_id": "admin-cli",
-        "username": "admin",
-        "password": "dev-only-admin-password",
+        "username": os.environ.get("CATALYST_USERS_IT_ADMIN", "admin"),
+        "password": secret_from_command(command, "the master admin's password command")
+        if command
+        else "dev-only-admin-password",
     }
     url = f"{SERVER}/realms/master/protocol/openid-connect/token"
     req = urllib.request.Request(url, data=urllib.parse.urlencode(form).encode())  # noqa: S310 - loopback test server
