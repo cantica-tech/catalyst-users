@@ -46,6 +46,12 @@ def _parser() -> argparse.ArgumentParser:
     st.add_argument("--first-name", help="the admin's first name (default: from `git config user.name`)")
     st.add_argument("--last-name", help="the admin's last name (default: from `git config user.name`)")
     st.add_argument("--force", action="store_true", help="replace an existing IAM/settings.json")
+    st.add_argument(
+        "--criterion",
+        action="append",
+        default=[],
+        help="a criterion to add, the admin appointed to it (repeatable; catalyst's deployments' project names)",
+    )
     sub.add_parser("login", help="log in with a code shown in your browser")
     sub.add_parser("logout", help="revoke your session and delete local credentials")
     w = sub.add_parser("whoami", help="who you are: groups and roles")
@@ -92,6 +98,20 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--login-client", action="append", help="a client whose tokens carry the grants (default: catalyst-cli)"
     )
+    criteria = sub.add_parser("criteria", help="criteria and their admins").add_subparsers(dest="action", required=True)
+    criteria.add_parser("list", help="the criteria you may see, with their admins")
+    c = criteria.add_parser("add", help="add a criterion (the catalyst-admin's); again, it covers its new groups")
+    c.add_argument("name", help="the criterion's name: its deployment's project_name")
+    c.add_argument("--admin", help="appoint this user its admin")
+    criteria.add_parser("admins", help="a criterion's admins").add_argument("name")
+    for action, text in (
+        ("appoint", "make a user an admin of a criterion"),
+        ("dismiss", "a user no longer administers it"),
+    ):
+        c = criteria.add_parser(action, help=text)
+        c.add_argument("name")
+        c.add_argument("username")
+
     u = users.add_parser("import", help="import a catalyst users document (no passwords; never deletes)")
     u.add_argument("file", help="a catalyst users document (users.json)")
     u.add_argument("--roles", required=True, help="its roles document, to map role names to realm roles")
@@ -196,7 +216,8 @@ def _setup(args: argparse.Namespace) -> int:
             ),
         }
 
-    outcome = cls.setup(settings, username, password, server_admin, ask_profile=profile)
+    criteria = tuple(getattr(args, "criterion", None) or ())
+    outcome = cls.setup(settings, username, password, server_admin, ask_profile=profile, criteria=criteria)
     if command is None:  # typed: into the keychain, and the command reading it into settings.json
         where = outcome.provider.get("url") or kind
         realm = outcome.provider.get("realm")
@@ -215,6 +236,7 @@ def _setup(args: argparse.Namespace) -> int:
 def _whoami(args: argparse.Namespace, who: Whoami) -> None:
     data = {**who.signer(), "email": who.email, "groups": list(who.groups), "roles": list(who.roles)}
     data["grants"] = list(who.grants)
+    data["administers"] = list(who.administers)
     text = "\n".join(
         [
             f"{who.username} ({who.name})",
@@ -223,6 +245,7 @@ def _whoami(args: argparse.Namespace, who: Whoami) -> None:
             f"  groups   {', '.join(who.groups) or '-'}",
             f"  roles    {', '.join(who.roles) or '-'}",
             f"  grants   {', '.join(who.grants) or '-'}",
+            f"  administers {', '.join(who.administers) or '-'}",
         ]
     )
     _out(args, data, text)
@@ -262,7 +285,7 @@ def _run(args: argparse.Namespace) -> int:
             print(provider.token())  # printed only on this explicit request (id-AUTH-000002)
         return 0
 
-    return {"users": _users, "groups": _groups, "roles": _roles}[args.command](args, provider)
+    return {"users": _users, "groups": _groups, "roles": _roles, "criteria": _criteria}[args.command](args, provider)
 
 
 def _users(args: argparse.Namespace, provider: Provider) -> int:
@@ -344,6 +367,36 @@ def _roles(args: argparse.Namespace, provider: Provider) -> int:
     elif args.action == "grant":
         admin.grant_role_to_user(args.username, args.role)
         _out(args, {"ok": True}, f"{args.username} holds {args.role}.")
+    return 0
+
+
+def _criteria(args: argparse.Namespace, provider: Provider) -> int:
+    """Criteria and their admins (id-DIR-000005, id-PROVIDER-000008), through the facade, with your own rights."""
+    if args.action == "list":
+        found = provider.criteria()
+        rows = [
+            f"{c['name']:<24} {', '.join(c['admins']) if c['admins'] is not None else '(not visible)'}" for c in found
+        ]
+        _out(args, found, "\n".join(rows) or "(no criteria)")
+    elif args.action == "add":
+        added = provider.add_criterion(args.name, args.admin)
+        _out(
+            args,
+            {"name": args.name, "added": added},
+            f"Criterion {args.name}: " + (", ".join(added) or "already there"),
+        )
+    elif args.action == "admins":
+        found = next((c for c in provider.criteria() if c["name"] == args.name), None)
+        if found is None:
+            raise CatalystUsersError(f"no criterion {args.name} (or you may not see it)")
+        admins = found["admins"] or []
+        _out(args, admins, "\n".join(admins) or "(no admins)")
+    elif args.action == "appoint":
+        provider.appoint(args.name, args.username)
+        _out(args, {"ok": True}, f"{args.username} administers {args.name}.")
+    elif args.action == "dismiss":
+        provider.dismiss(args.name, args.username)
+        _out(args, {"ok": True}, f"{args.username} no longer administers {args.name}.")
     return 0
 
 

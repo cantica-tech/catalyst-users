@@ -34,7 +34,13 @@ cantica-tech            [stakeholder]
     developers          [developer]
     maintainers         [release-manager, tech-lead]
 catalyst-admins         [catalyst-admin, realm-admin]  (the admin setup creates, or set_admin.py)
+criteria                                               (setup --criterion / criteria add: one per deployment)
+  <name>
+    admins              [criterion-admin]
 ```
+
+The realm has Keycloak's fine-grained admin permissions on, so a criterion's admins manage the members of its groups
+and nothing else ([Criteria](#criteria-and-their-admins)).
 
 Keycloak keeps its database in `.keycloack/` on the host (never in git), so
 users and changes survive `docker compose up -d --force-recreate`; delete
@@ -59,12 +65,13 @@ Every command goes through the configured provider ([Configuration](#configurati
 | --- | --- |
 | `providers` | The registered providers, and where each comes from. |
 | `login` | Device login: shows a link and a code, waits for you to approve in the browser. No password passes through catalyst-users. |
-| `whoami [--json] [--system]` | Your username, subject, issuer, groups, roles and catalyst grants; with `--system`, the local system account's. |
+| `whoami [--json] [--system]` | Your username, subject, issuer, groups, roles, catalyst grants and the criteria you administer; with `--system`, the local system account's. |
 | `token [--json] [--system]` | Prints a fresh access token, to pass to an API; with `--system`, the local system account's ([below](#the-local-system-account)). Keep it secret. |
 | `logout` | Revokes your session at Keycloak and deletes the local credentials. |
 | `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `disable NAME`, `enable NAME`, `groups NAME`, `import FILE --roles FILE` | Users. They are disabled, never deleted. `import` brings a catalyst `users.json` in, without passwords. |
 | `groups list`, `add PATH`, `members PATH`, `add-member PATH NAME`, `remove-member PATH NAME`, `grant-role PATH ROLE` | Nested groups. `add /a/b/c` creates any missing parents. |
 | `roles list`, `add NAME [--description D]`, `grant NAME ROLE`, `provision FILE [--login-client C]` | Realm roles. `provision` writes a catalyst roles document: each role and what it may run (below). |
+| `criteria list`, `add NAME [--admin USER]`, `admins NAME`, `appoint NAME USER`, `dismiss NAME USER` | Criteria and their admins ([below](#criteria-and-their-admins)). `add` is the catalyst-admin's, and idempotent. |
 
 Global options: `--pointer FILE`, `--json`, and Keycloak's `--server`, `--realm`, `--client-id`. Exit codes:
 0 done, 1 refused or failed, 2 usage.
@@ -164,9 +171,26 @@ needs an admin secret to know what someone may do.
 
 `catalyst-users roles provision keycloak/catalyst-roles.json` writes catalyst's
 roles into the realm: the realm roles, their grants and the claim mapper. It
-adds and never deletes. A `static` backend, with people declared in the pointer
+adds and never deletes. A role scoped to a criterion (`"scope": "criterion"`) is
+written with no grant. A `static` backend, with people declared in the pointer
 and nothing verified, exists for tests only: it is refused unless
 `CATALYST_ALLOW_STATIC_IDENTITY=1`.
+
+### Criteria and their admins
+
+Two admin roles, whatever the provider (`id-DIR-000005`): the **catalyst-admin** administers every criterion and the
+directory, and alone creates a criterion; a **criterion-admin** administers only the criteria they were appointed
+to: every catalyst command there, and the membership of that criterion's groups (appointing its other admins), never
+a user, a group or a role. A criterion's scope is never a grant (a grant would hold in every criterion): the provider
+reports `administers`, the criteria someone administers, and catalyst gives an admin's rights only in a deployment
+whose `project_name` that list names. Every provider reports it (empty without criteria); one that cannot add or
+appoint says so (`id-PROVIDER-000008`).
+
+With Keycloak, a criterion is the group `/criteria/<name>`; `/criteria/<name>/admins` holds `criterion-admin`, and
+fine-grained admin permissions give it the membership of the groups under `/criteria/<name>`, plus the sight of users
+(one permission shared by every criterion's admins, since the realm's permissions decide unanimously). `setup
+--criterion NAME` (repeatable) readies the realm and adds those criteria with the admin appointed; `criteria add NAME`
+adds one later, and again covers groups added under it since. See [docs/onboarding.md](docs/onboarding.md).
 
 ## FastAPI
 

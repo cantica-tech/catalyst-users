@@ -177,3 +177,155 @@ class KeycloakAdmin:
 
     def grant_role_to_user(self, username: str, role: str) -> None:
         self._call("POST", f"/users/{self.user(username).id}/role-mappings/realm", body=[self._role(role)])
+
+    # --- criteria (id-DIR-000005, id-PROVIDER-000008) -------------------------
+    # A criterion is the group /criteria/<name>; its admins, /criteria/<name>/admins, hold the realm role
+    # criterion-admin. The realm's fine-grained admin permissions (FGAP v2, Keycloak 26.2+) give that group the
+    # membership of its criterion's groups and the sight of users, nothing else. A permission on a group does not
+    # reach its subgroups, so each criterion's permission names every group under it; `add_criterion` again
+    # covers groups added since.
+
+    def prepare_criteria(self) -> list[str]:
+        """The realm, ready for criteria: fine-grained admin permissions on, the role and the /criteria group.
+        Adds what is missing, changes nothing else; returns what it added."""
+        from catalyst_users.provider import CRITERIA_GROUP, CRITERION_ADMIN
+
+        added = []
+        realm = self._call("GET", "").json()
+        if not realm.get("adminPermissionsEnabled"):
+            self._call("PUT", "", body={**realm, "adminPermissionsEnabled": True})
+            added.append("fine-grained admin permissions")
+        if CRITERION_ADMIN not in {name for name, _ in self.roles()}:
+            self.create_role(CRITERION_ADMIN, "catalyst: Criterion Admin (every right, in the criteria it administers)")
+            added.append(f"role {CRITERION_ADMIN}")
+        try:
+            self.group(CRITERIA_GROUP)
+        except NotFoundError:
+            self.create_group(CRITERIA_GROUP)
+            added.append(f"group {CRITERIA_GROUP}")
+        return added
+
+    def criteria(self) -> list[dict[str, Any]]:
+        """Each criterion the caller may see, with its admins (None when the caller may not read them)."""
+        from catalyst_users.provider import CRITERIA_GROUP
+
+        prefix = CRITERIA_GROUP + "/"
+        names = sorted({g.path[len(prefix) :].split("/")[0] for g in self.groups() if g.path.startswith(prefix)})
+        out = []
+        for name in names:
+            try:
+                admins: list[str] | None = self.members(f"{prefix}{name}/admins")
+            except (AdminError, NotFoundError):
+                admins = None
+            out.append({"name": name, "admins": admins})
+        return out
+
+    def add_criterion(self, name: str) -> list[str]:
+        """The criterion `name`: its group, its admins group holding criterion-admin, and the permissions that let
+        those admins manage its groups' members. Idempotent; returns what it added or refreshed."""
+        from catalyst_users.provider import CRITERIA_GROUP, CRITERION_ADMIN, criterion_name
+
+        criterion = f"{CRITERIA_GROUP}/{criterion_name(name)}"
+        added = self.prepare_criteria()
+        try:
+            self.group(f"{criterion}/admins")
+        except NotFoundError:
+            self.create_group(f"{criterion}/admins")
+            added.append(f"group {criterion}/admins")
+        if CRITERION_ADMIN not in self.group(f"{criterion}/admins").roles:
+            self.grant_role_to_group(f"{criterion}/admins", CRITERION_ADMIN)
+            added.append(f"{CRITERION_ADMIN} on {criterion}/admins")
+        added += self._criterion_permissions(name, criterion)
+        return added
+
+    def appoint(self, name: str, username: str) -> None:
+        from catalyst_users.provider import CRITERIA_GROUP, criterion_name
+
+        self.add_member(f"{CRITERIA_GROUP}/{criterion_name(name)}/admins", username)
+
+    def dismiss(self, name: str, username: str) -> None:
+        """Removes the membership, never the person (id-DIR-000002)."""
+        from catalyst_users.provider import CRITERIA_GROUP, criterion_name
+
+        self.remove_member(f"{CRITERIA_GROUP}/{criterion_name(name)}/admins", username)
+
+    def _authz(self) -> str:
+        found = self._call("GET", "/clients", params={"clientId": "admin-permissions"}).json()
+        if not found:
+            raise AdminError(400, "the realm has no fine-grained admin permissions (admin-permissions client)")
+        return f"/clients/{found[0]['id']}/authz/resource-server"
+
+    def _named(self, authz: str, kind: str, name: str) -> dict[str, Any] | None:
+        reps = self._call("GET", f"{authz}/{kind}", params={"name": name, "first": 0, "max": 100}).json()
+        return next((r for r in reps if r.get("name") == name), None)
+
+    def _subtree(self, path: str) -> list[Group]:
+        return [g for g in self.groups() if g.path == path or g.path.startswith(path + "/")]
+
+    def _criterion_permissions(self, name: str, criterion: str) -> list[str]:
+        authz, added = self._authz(), []
+        policy_name = f"criterion {name}: its admins"
+        policy = self._named(authz, "policy", policy_name)
+        if policy is None:
+            admins = self.group(f"{criterion}/admins")
+            self._call(
+                "POST",
+                f"{authz}/policy/group",
+                body={
+                    "name": policy_name,
+                    "groups": [{"id": admins.id, "extendChildren": False}],
+                    "logic": "POSITIVE",
+                },
+            )
+            policy = self._named(authz, "policy", policy_name)
+            added.append(f"policy {policy_name}")
+        assert policy is not None  # noqa: S101 - just created
+        groups = sorted(g.id for g in self._subtree(criterion))
+        perm_name = f"criterion {name}: its groups"
+        body = {
+            "name": perm_name,
+            "resourceType": "Groups",
+            "scopes": ["view", "view-members", "manage-members", "manage-membership"],
+            "resources": groups,
+            "policies": [policy["id"]],
+            "decisionStrategy": "UNANIMOUS",
+        }
+        found = self._named(authz, "permission", perm_name)
+        if found is None:
+            self._call("POST", f"{authz}/permission/scope", body=body)
+            added.append(f"permission {perm_name}")
+        elif sorted(self._resources(authz, found["id"])) != groups:
+            self._call("PUT", f"{authz}/permission/scope/{found['id']}", body={**body, "id": found["id"]})
+            added.append(f"permission {perm_name} (now {len(groups)} groups)")
+        return added + self._users_permission(authz, policy["id"])
+
+    def _users_permission(self, authz: str, policy_id: str) -> list[str]:
+        """One permission over every user, shared by all criteria's admins: the realm's permissions decide
+        unanimously, so a permission per criterion on the same users would let each criterion's veto the others'.
+        Affirmative, it lets any criterion's admins find a user and put them in the groups they may manage."""
+        perm_name = "criteria: their admins find users"
+        found = self._named(authz, "permission", perm_name)
+        held = [str(p["id"]) for p in self._associated(authz, found["id"])] if found else []
+        if policy_id in held:
+            return []
+        body = {
+            "name": perm_name,
+            "resourceType": "Users",
+            "scopes": ["view", "manage-group-membership"],
+            "resources": [],
+            "policies": [*held, policy_id],
+            "decisionStrategy": "AFFIRMATIVE",
+        }
+        if found is None:
+            self._call("POST", f"{authz}/permission/scope", body=body)
+            return [f"permission {perm_name}"]
+        self._call("PUT", f"{authz}/permission/scope/{found['id']}", body={**body, "id": found["id"]})
+        return [f"permission {perm_name} (now {len(body['policies'])} criteria)"]
+
+    def _resources(self, authz: str, permission_id: str) -> list[str]:
+        """The group ids a Groups permission names (FGAP v2 keeps each as a resource named by the group's id)."""
+        reps = self._call("GET", f"{authz}/policy/{permission_id}/resources").json()
+        return [str(r.get("name")) for r in reps]
+
+    def _associated(self, authz: str, permission_id: str) -> list[dict[str, Any]]:
+        return self._call("GET", f"{authz}/policy/{permission_id}/associatedPolicies").json()
