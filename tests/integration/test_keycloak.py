@@ -24,7 +24,7 @@ from catalyst_users.oidc import OIDCClient
 from catalyst_users.provider import ProviderError
 from catalyst_users.providers.keycloak import KeycloakProvider
 from catalyst_users.session import Session
-from tests.integration.conftest import SERVER, approve_device, bootstrap_token, password_token
+from tests.integration.conftest import SERVER, approve_device, bootstrap_token, master_admin, password_token
 
 pytestmark = pytest.mark.usefixtures("dev_people")
 
@@ -154,9 +154,7 @@ def test_setup_creates_a_realm_and_its_admin_then_only_signs_in(monkeypatch):
     password = f"it-{secrets.token_hex(8)}"
     try:
         profile = {"email": "it-owner@example.com", "first_name": "It", "last_name": "Owner"}
-        created = KeycloakProvider.setup(
-            settings, "it-owner", password, lambda: ("admin", "dev-only-admin-password"), ask_profile=lambda: profile
-        )
+        created = KeycloakProvider.setup(settings, "it-owner", password, master_admin, ask_profile=lambda: profile)
         assert created.outcome == "created" and created.provider["realm"] == realm
 
         def never() -> tuple[str, str]:
