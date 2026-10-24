@@ -26,6 +26,8 @@ from catalyst_users.providers.keycloak import KeycloakProvider
 from catalyst_users.session import Session
 from tests.integration.conftest import SERVER, approve_device, bootstrap_token, password_token
 
+pytestmark = pytest.mark.usefixtures("dev_people")
+
 
 @pytest.fixture
 def oidc(settings):

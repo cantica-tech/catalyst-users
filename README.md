@@ -7,7 +7,7 @@ standard-library-only Python core, the `catalyst-users` command line, and a
 FastAPI integration.
 
 This is stage one of moving users and groups out of catalyst criteria
-(see [docs/python-identity-libraries.md](docs/python-identity-libraries.md) §10).
+(see [docs/development/python-identity-libraries.md](docs/development/python-identity-libraries.md) §10).
 Stage two integrates it into catalyst; the core imports only the standard
 library so that catalyst's single-file CLI can carry it.
 
