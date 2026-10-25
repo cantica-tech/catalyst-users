@@ -1,7 +1,7 @@
 # catalyst project file: names this project's criterion ($HOME/.catalyst/projects/<project_name>/criterion). Never a path.
 project_name = "catalyst-users"
 format = "1.0-rc"
-kernel_version = "0.110.0"
+kernel_version = "0.110.1"
 module = "software-engineering"
 agent = "claude-code"
 repoed = true
