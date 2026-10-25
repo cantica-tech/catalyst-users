@@ -21,7 +21,7 @@ uv run catalyst-users setup          # asks for the provider, its settings, the 
 uv run catalyst-users whoami --system
 ```
 
-`setup` ([below](#setup)) writes `~/.catalyst-users/IAM/settings.json`; until it exists, a command asks for it in a
+`setup` ([below](#setup)) writes `~/.catalyst/users/IAM/settings.json`; until it exists, a command asks for it in a
 terminal and refuses otherwise.
 
 The realm in [keycloak/realm-catalyst.json](keycloak/realm-catalyst.json)
@@ -137,7 +137,7 @@ A refused sign-in writes nothing. Keycloak's JSON:
 ```
 
 `definition` (a path, or the realm itself) is used only to create the realm, and refused if it holds a person or a
-secret. `~/.catalyst-users/IAM/settings.json` (`0600`, in a `0700` directory) then holds the type, the username, the
+secret. `~/.catalyst/users/IAM/settings.json` (`0600`, in a `0700` directory) then holds the type, the username, the
 connection settings and the password command, never a secret. A typed password goes into the OS keychain (macOS
 `security`, else `secret-tool`), and the command that reads it is stored. `--force` replaces existing settings.
 
@@ -228,7 +228,7 @@ A runnable example is in [examples/api.py](examples/api.py).
 ## Configuration
 
 The provider is chosen by a pointer: `--pointer FILE` (JSON) or `CATALYST_USERS_POINTER`, else
-`~/.catalyst-users/IAM/settings.json` ([setup](#setup)), else `config.toml`'s `provider` with its table, else explicit
+`~/.catalyst/users/IAM/settings.json` ([setup](#setup)), else `config.toml`'s `provider` with its table, else explicit
 Keycloak settings (flags or environment). With none of them, a command asks for setup.
 
 ```json
@@ -254,7 +254,9 @@ flags. Given explicitly (environment or flags), they win over the `[keycloak]` t
 | `api_client_secret` | `CATALYST_USERS_API_CLIENT_SECRET` | none; services need it |
 | `timeout` | `CATALYST_USERS_TIMEOUT` | `10` seconds |
 
-`CATALYST_USERS_HOME` moves `~/.catalyst-users`.
+catalyst-users' home is `users/` in catalyst's: `~/.catalyst/users`, or `$CATALYST_HOME/users`; `CATALYST_USERS_HOME`
+names another. A `~/.catalyst-users` made by an earlier version is moved there once, the first time it is used,
+and a link to it left in its place, so an earlier catalyst-users (vendored by catalyst) still finds it.
 
 Keycloak builds its issuer from the host you call: use the same host
 (`localhost` or `127.0.0.1`) for the CLI and for services.
@@ -263,7 +265,7 @@ Keycloak builds its issuer from the host you call: use the same host
 
 - **Login** uses the OAuth 2.0 device authorization grant (RFC 8628) on a
   public client, and Keycloak asks for consent.
-- **Tokens** are stored in `~/.catalyst-users/credentials.json`: the
+- **Tokens** are stored in `~/.catalyst/users/credentials.json`: the
   directory is `0700`, the file `0600`, and every write is atomic. Tokens
   never appear in logs, errors or output, except through `token`. An access
   token is refreshed when it has less than 30 seconds left.
