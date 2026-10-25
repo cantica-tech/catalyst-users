@@ -178,14 +178,16 @@ class KeycloakProvider:
         return self._session().access_token()
 
     # --- the directory -----------------------------------------------------------------
-    def directory(self):
+    def directory(self, system: bool = False):
+        """The realm's directory with the caller's own rights (id-DIR-000004), or, `system=True`, the local system
+        account's: a server's, once it has verified its caller itself (id-DIR-000006)."""
         from catalyst_users.admin import KeycloakAdmin
         from catalyst_users.http import Http
 
-        session = self._session()
+        token = (lambda: self.system_token()["access_token"]) if system else self._session().access_token
         base, realm = self.issuer.rstrip("/").rsplit("/realms/", 1)
         settings = _AdminSettings(f"{base}/admin/realms/{realm}", self.timeout)
-        return KeycloakAdmin(settings, session.access_token, Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
+        return KeycloakAdmin(settings, token, Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
 
     def users(self) -> list[dict[str, Any]]:
         return [u.__dict__ for u in self.directory().list_users()]
@@ -218,6 +220,26 @@ class KeycloakProvider:
 
     def dismiss(self, name: str, username: str) -> None:
         self.directory().dismiss(name, username)
+
+    # --- a criterion's members (id-DIR-000006) -------------------------------------------------
+    def members(self, name: str, *, system: bool = False) -> list[str]:
+        return self.directory(system).criterion_members(name)
+
+    def is_member(self, name: str, username: str, *, system: bool = False) -> bool:
+        return self.directory(system).is_criterion_member(name, username)
+
+    def add_member(self, name: str, username: str, *, system: bool = False) -> None:
+        from catalyst_users.errors import NotFoundError
+
+        directory = self.directory(system)
+        try:
+            directory.user(username)
+        except NotFoundError:
+            raise ProviderError(f"{username} is not a person of the realm {self.issuer}") from None
+        directory.join_criterion(name, username)
+
+    def remove_member(self, name: str, username: str, *, system: bool = False) -> None:
+        self.directory(system).leave_criterion(name, username)
 
     # --- the local system account: setup's admin (id-AUTH-000006) ---------------------------
     def _sign_in(self, password: str, oidc: Any = None):

@@ -158,13 +158,13 @@ def _admin(transport) -> KeycloakAdmin:
 def test_a_criterion_is_its_groups_its_admins_role_and_their_permissions(transport):
     realm = Realm(transport)
     added = _admin(transport).add_criterion("alpha")
-    assert {"/criteria/alpha", "/criteria/alpha/admins"} <= set(realm.groups)
+    assert {"/criteria/alpha", "/criteria/alpha/admins", "/criteria/alpha/members"} <= set(realm.groups)
     assert realm.role_mappings == [("/criteria/alpha/admins", "criterion-admin")]
     (policy,) = realm.policies
     assert policy["groups"] == [{"id": "g-criteria-alpha-admins", "extendChildren": False}]
     groups = realm.permission("criterion alpha: its groups")
     assert groups["resourceType"] == "Groups" and groups["policies"] == [policy["id"]]
-    assert sorted(groups["resources"]) == ["g-criteria-alpha", "g-criteria-alpha-admins"]
+    assert sorted(groups["resources"]) == ["g-criteria-alpha", "g-criteria-alpha-admins", "g-criteria-alpha-members"]
     assert set(groups["scopes"]) == {"view", "view-members", "manage-members", "manage-membership"}
     users = realm.permission("criteria: their admins find users")
     assert users["resourceType"] == "Users" and users["resources"] == [] and users["policies"] == [policy["id"]]
@@ -178,7 +178,7 @@ def test_adding_a_criterion_again_changes_nothing_but_covers_its_new_groups(tran
     admin.add_criterion("alpha")
     assert admin.add_criterion("alpha") == []
     admin.create_group("/criteria/alpha/developers")
-    assert admin.add_criterion("alpha") == ["permission criterion alpha: its groups (now 3 groups)"]
+    assert admin.add_criterion("alpha") == ["permission criterion alpha: its groups (now 4 groups)"]
     assert "g-criteria-alpha-developers" in realm.permission("criterion alpha: its groups")["resources"]
     assert len(realm.policies) == 1 and len(realm.permissions) == 2 and len(realm.role_mappings) == 1
 
@@ -241,3 +241,106 @@ def test_the_command_line_lists_criteria_and_refuses_what_the_provider_cannot_do
     assert json.loads(capsys.readouterr().out)["administers"] == ["catalyst"]
     assert cli.main(["--pointer", str(pointer), "criteria", "appoint", "catalyst", "bob"]) == 1
     assert "does not support appointing admins" in capsys.readouterr().err
+
+
+# --- a criterion's members (id-DIR-000006) ------------------------------------------------------------------------
+
+
+def _people(transport, groups_of: dict[str, list[str]]) -> None:
+    """Users by exact username, each with their groups; anyone else unknown to the realm."""
+
+    def lookup(request: Request):
+        name = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(request.url).query)).get("username")
+        return reply(body=[{"id": f"u-{name}", "username": name}] if name in groups_of else [])
+
+    transport.on("GET", f"{ADMIN}/users", lookup)
+    for name, groups in groups_of.items():
+        transport.on("GET", f"{ADMIN}/users/u-{name}/groups", reply(body=[{"path": g} for g in groups]))
+
+
+def test_a_criterion_made_before_members_gains_its_group_and_the_permission_names_it(transport):
+    realm = Realm(transport)
+    admin = _admin(transport)
+    admin.prepare_criteria()
+    admin.create_group("/criteria/alpha/admins")
+    admin.add_criterion("alpha")
+    assert "/criteria/alpha/members" in realm.groups
+    assert "g-criteria-alpha-members" in realm.permission("criterion alpha: its groups")["resources"]
+    assert admin.add_criterion("alpha") == []
+
+
+def test_membership_is_read_from_the_persons_groups_now(transport):
+    Realm(transport)
+    admin = _admin(transport)
+    admin.add_criterion("alpha")
+    _people(
+        transport,
+        {"ann": ["/criteria/alpha/members"], "bob": ["/criteria/alpha/members/sub", "/criteria/beta/members"]},
+    )
+    transport.on("GET", f"{ADMIN}/groups/g-criteria-alpha-members/members", reply(body=[{"username": "ann"}]))
+    assert admin.criterion_members("alpha") == ["ann"]
+    assert admin.is_criterion_member("alpha", "ann")
+    assert not admin.is_criterion_member("alpha", "bob")  # a subgroup, or another criterion, is not membership
+    assert not admin.is_criterion_member("alpha", "mallory")  # unknown to the realm
+
+
+def test_joining_and_leaving_change_the_members_group_only(transport):
+    Realm(transport)
+    admin = _admin(transport)
+    admin.add_criterion("alpha")
+    _people(transport, {"ann": []})
+    transport.on("PUT", f"{ADMIN}/users/u-ann/groups/g-criteria-alpha-members", reply(204))
+    transport.on("DELETE", f"{ADMIN}/users/u-ann/groups/g-criteria-alpha-members", reply(204))
+    admin.join_criterion("alpha", "ann")
+    admin.leave_criterion("alpha", "ann")
+    assert ("PUT", f"{ADMIN}/users/u-ann/groups/g-criteria-alpha-members") in transport.calls()
+    assert ("DELETE", f"{ADMIN}/users/u-ann/groups/g-criteria-alpha-members") in transport.calls()
+    assert not [c for c in transport.calls("DELETE") if c[1].removeprefix(ADMIN) == "/users/u-ann"]
+    with pytest.raises(ProviderError, match="not a criterion name"):
+        admin.join_criterion("../catalyst-admins", "ann")
+
+
+def test_the_keycloak_provider_refuses_a_member_outside_the_realm(transport, monkeypatch):
+    from catalyst_users.providers.keycloak import KeycloakProvider
+
+    Realm(transport)
+    _people(transport, {"ann": []})
+    transport.on("PUT", f"{ADMIN}/users/u-ann/groups/g-criteria-alpha-members", reply(204))
+    provider = KeycloakProvider.__new__(KeycloakProvider)
+    provider.issuer = ISSUER
+    monkeypatch.setattr(provider, "directory", lambda system=False: _admin(transport), raising=False)
+    _admin(transport).add_criterion("alpha")
+    provider.add_member("alpha", "ann", system=True)
+    with pytest.raises(ProviderError, match="mallory is not a person of the realm"):
+        provider.add_member("alpha", "mallory", system=True)
+    assert not [c for c in transport.calls("PUT") if "mallory" in c[1]]
+
+
+def test_the_static_provider_reports_members_and_changes_none(monkeypatch):
+    monkeypatch.setenv(STATIC_FLAG, "1")
+    people = [
+        {"username": "ann", "groups": ["/criteria/catalyst/members"]},
+        {"username": "bob", "groups": ["criteria/catalyst/members/", "/criteria/kb/admins"]},
+        {"username": "eve", "groups": ["/criteria/catalyst/members/x"]},
+    ]
+    static = StaticProvider.from_pointer({"provider": "static", "people": people})
+    assert static.members("catalyst") == ["ann", "bob"]
+    assert static.is_member("catalyst", "bob") and not static.is_member("catalyst", "eve")
+    assert static.members("kb") == []
+    for call in (lambda: static.add_member("catalyst", "eve"), lambda: static.remove_member("catalyst", "ann")):
+        with pytest.raises(ProviderError, match="does not support changing members"):
+            call()
+
+
+def test_the_command_line_lists_members_and_changes_none(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv(STATIC_FLAG, "1")
+    pointer = tmp_path / "pointer.json"
+    people = [{"username": "ann", "groups": ["/criteria/catalyst/members"]}]
+    pointer.write_text(json.dumps({"provider": "static", "people": people}))
+    assert cli.main(["--pointer", str(pointer), "--json", "criteria", "members", "catalyst"]) == 0
+    assert json.loads(capsys.readouterr().out) == ["ann"]
+    assert cli.main(["--pointer", str(pointer), "criteria", "members", "kb"]) == 0
+    assert "(no members)" in capsys.readouterr().out
+    for action in ("add-member", "remove-member", "join", "leave"):
+        with pytest.raises(SystemExit):
+            cli.main(["--pointer", str(pointer), "criteria", action, "catalyst", "bob"])
