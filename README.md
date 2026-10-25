@@ -329,9 +329,3 @@ This project is managed by catalyst (`catalyst.toml`). Its rules live in
 the criterion: `catalyst where` shows where, and `catalyst list rules`
 lists them. The rules are `env-…` (toolchain) and `id-…` (identity
 behaviour). Every change is recorded in the journal.
-
-The design knowledge (the research, the Keycloak decision, the catalyst
-integration) is also kept in the knowledge base **catalyst-users-kb**, a
-sibling repository governed by catalyst's knowledge-base module and
-classified Internal. A design decision made here is imported there when it
-is made (`/kb-import`).
