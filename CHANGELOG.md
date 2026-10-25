@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 — 2026-10-25
+
+A criterion's members (REQ-000012, `id-DIR-000006`).
+
+- Added: the facade's `members`, `is_member`, `add_member` and `remove_member`. `is_member` asks the provider now,
+  never a token's group claims (a snapshot taken at login); `add_member` refuses anyone the realm does not know;
+  removing removes the membership, never the person. Each call uses the caller's rights, or the local system
+  account's with `system=True`, for a server that has verified its caller itself.
+- Added: Keycloak keeps a criterion's members in `/criteria/<name>/members`, made by `criteria add` (and by adding
+  a criterion made before this version again) and covered by its admins' permissions. `static` reads members from
+  its people's groups and changes none.
+- Added: `catalyst-users criteria members NAME`, which lists them. No command changes them: catalyst does, recording
+  each change (`docs/membership.md`).
+
 ## 0.6.0 — 2026-10-25
 
 catalyst-users' home is in catalyst's (REQ-000010).

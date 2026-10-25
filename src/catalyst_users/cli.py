@@ -104,6 +104,9 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument("name", help="the criterion's name: its deployment's project_name")
     c.add_argument("--admin", help="appoint this user its admin")
     criteria.add_parser("admins", help="a criterion's admins").add_argument("name")
+    criteria.add_parser(
+        "members", help="a criterion's members (catalyst changes them, recording each change)"
+    ).add_argument("name")
     for action, text in (
         ("appoint", "make a user an admin of a criterion"),
         ("dismiss", "a user no longer administers it"),
@@ -391,6 +394,9 @@ def _criteria(args: argparse.Namespace, provider: Provider) -> int:
             raise CatalystUsersError(f"no criterion {args.name} (or you may not see it)")
         admins = found["admins"] or []
         _out(args, admins, "\n".join(admins) or "(no admins)")
+    elif args.action == "members":
+        members = provider.members(args.name)
+        _out(args, members, "\n".join(members) or "(no members)")
     elif args.action == "appoint":
         provider.appoint(args.name, args.username)
         _out(args, {"ok": True}, f"{args.username} administers {args.name}.")
