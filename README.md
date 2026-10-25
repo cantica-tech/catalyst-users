@@ -71,7 +71,7 @@ Every command goes through the configured provider ([Configuration](#configurati
 | `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `disable NAME`, `enable NAME`, `groups NAME`, `import FILE --roles FILE` | Users. They are disabled, never deleted. `import` brings a catalyst `users.json` in, without passwords. |
 | `groups list`, `add PATH`, `members PATH`, `add-member PATH NAME`, `remove-member PATH NAME`, `grant-role PATH ROLE` | Nested groups. `add /a/b/c` creates any missing parents. |
 | `roles list`, `add NAME [--description D]`, `grant NAME ROLE`, `provision FILE [--login-client C]` | Realm roles. `provision` writes a catalyst roles document: each role and what it may run (below). |
-| `criteria list`, `add NAME [--admin USER]`, `admins NAME`, `appoint NAME USER`, `dismiss NAME USER` | Criteria and their admins ([below](#criteria-and-their-admins)). `add` is the catalyst-admin's, and idempotent. |
+| `criteria list`, `add NAME [--admin USER]`, `admins NAME`, `members NAME`, `appoint NAME USER`, `dismiss NAME USER` | Criteria, their admins and their members ([below](#criteria-and-their-admins)). `add` is the catalyst-admin's, and idempotent. `members` only lists: catalyst changes members, recording each change ([docs/membership.md](docs/membership.md)). |
 
 Global options: `--pointer FILE`, `--json`, and Keycloak's `--server`, `--realm`, `--client-id`. Exit codes:
 0 done, 1 refused or failed, 2 usage.
@@ -191,6 +191,14 @@ fine-grained admin permissions give it the membership of the groups under `/crit
 (one permission shared by every criterion's admins, since the realm's permissions decide unanimously). `setup
 --criterion NAME` (repeatable) readies the realm and adds those criteria with the admin appointed; `criteria add NAME`
 adds one later, and again covers groups added under it since. See [docs/onboarding.md](docs/onboarding.md).
+
+A criterion also has **members** (`id-DIR-000006`): with Keycloak, `/criteria/<name>/members`, made with the
+criterion and covered by its admins' permissions. The facade's `members`, `is_member`, `add_member` and
+`remove_member` reach them, with the caller's rights or, `system=True`, the local system account's (a server's, once
+it has verified its caller). `is_member` asks the provider now, never a token's group claims; `add_member` refuses
+anyone the realm does not know. catalyst's server checks membership on every request and records every change in
+a ledger of its own, so a member added any other way (the provider's console, `groups add-member`) gets no access
+until catalyst adopts it. See [docs/membership.md](docs/membership.md).
 
 ## FastAPI
 

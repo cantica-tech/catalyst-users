@@ -235,6 +235,11 @@ class KeycloakAdmin:
         if CRITERION_ADMIN not in self.group(f"{criterion}/admins").roles:
             self.grant_role_to_group(f"{criterion}/admins", CRITERION_ADMIN)
             added.append(f"{CRITERION_ADMIN} on {criterion}/admins")
+        try:  # its members (id-DIR-000006), before the permission that names every group under it
+            self.group(f"{criterion}/members")
+        except NotFoundError:
+            self.create_group(f"{criterion}/members")
+            added.append(f"group {criterion}/members")
         added += self._criterion_permissions(name, criterion)
         return added
 
@@ -248,6 +253,33 @@ class KeycloakAdmin:
         from catalyst_users.provider import CRITERIA_GROUP, criterion_name
 
         self.remove_member(f"{CRITERIA_GROUP}/{criterion_name(name)}/admins", username)
+
+    # --- a criterion's members (id-DIR-000006) ----------------------------------
+    # /criteria/<name>/members. Whether someone is a member is read from their groups now, never from a token.
+
+    @staticmethod
+    def _members_group(name: str) -> str:
+        from catalyst_users.provider import CRITERIA_GROUP, criterion_name
+
+        return f"{CRITERIA_GROUP}/{criterion_name(name)}/members"
+
+    def criterion_members(self, name: str) -> list[str]:
+        return self.members(self._members_group(name))
+
+    def is_criterion_member(self, name: str, username: str) -> bool:
+        group = self._members_group(name)
+        try:
+            return group in self.user_groups(username)
+        except NotFoundError:
+            return False
+
+    def join_criterion(self, name: str, username: str) -> None:
+        """Adds a person of the realm; one the realm does not know is refused (NotFoundError)."""
+        self.add_member(self._members_group(name), username)
+
+    def leave_criterion(self, name: str, username: str) -> None:
+        """Removes the membership, never the person (id-DIR-000002)."""
+        self.remove_member(self._members_group(name), username)
 
     def _authz(self) -> str:
         found = self._call("GET", "/clients", params={"clientId": "admin-permissions"}).json()

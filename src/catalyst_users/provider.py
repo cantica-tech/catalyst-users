@@ -13,7 +13,8 @@ a client role of the catalyst client in the token: `cmd:<command>` (`cmd:*` ever
 
 A criterion has admins (id-DIR-000005, id-PROVIDER-000008): `whoami` reports the criteria someone administers
 (`administers`), never as a grant, since a grant would hold in every criterion; a client gives an admin's rights only
-in a criterion that list names.
+in a criterion that list names. It has members (id-DIR-000006): `members`, `is_member` (asked of the provider now,
+never read from a token), `add_member` and `remove_member`; membership grants no command.
 """
 
 from __future__ import annotations
@@ -152,6 +153,13 @@ class Provider(Protocol):
     def add_criterion(self, name: str, admin: str | None = None) -> Any: ...
     def appoint(self, name: str, username: str) -> None: ...
     def dismiss(self, name: str, username: str) -> None: ...
+
+    # a criterion's members (id-DIR-000006): asked of the provider now, never read from a token; `system=True` is a
+    # server asking with the local system account's rights, having verified its caller itself
+    def members(self, name: str, *, system: bool = False) -> list[str]: ...
+    def is_member(self, name: str, username: str, *, system: bool = False) -> bool: ...
+    def add_member(self, name: str, username: str, *, system: bool = False) -> None: ...
+    def remove_member(self, name: str, username: str, *, system: bool = False) -> None: ...
 
     # the local system account: setup's admin (id-AUTH-000006). A provider class also has
     # `setup(settings, username, password, ask_server_admin, transport=None, criteria=()) -> SetupOutcome`

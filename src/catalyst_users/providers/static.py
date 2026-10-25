@@ -11,7 +11,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from catalyst_users.provider import STATIC_FLAG, ProviderError, Whoami, administers_from_groups, unsupported
+from catalyst_users.provider import (
+    STATIC_FLAG,
+    ProviderError,
+    Whoami,
+    administers_from_groups,
+    criterion_name,
+    unsupported,
+)
 
 
 @dataclass
@@ -20,7 +27,8 @@ class StaticProvider:
 
     `people`: `{username, name, groups, roles}`; `roles`: `{id, name, grants}` (a role's grants are `cmd:…` and
     `reconcile:…`, as the token would carry them). The logged-in person is the one named, else the only one. A
-    person administers the criteria of their `/criteria/<name>/admins` groups (id-DIR-000005)."""
+    person administers the criteria of their `/criteria/<name>/admins` groups (id-DIR-000005) and is a member of those
+    of their `/criteria/<name>/members` groups (id-DIR-000006)."""
 
     issuer: str = "static:"
     people: list[dict[str, Any]] = field(default_factory=list)
@@ -125,6 +133,21 @@ class StaticProvider:
 
     def dismiss(self, name: str, username: str) -> None:
         raise unsupported(self.kind, "dismissing admins")
+
+    def members(self, name: str, *, system: bool = False) -> list[str]:
+        group = f"/criteria/{criterion_name(name)}/members"
+        return sorted(
+            p["username"] for p in self.people if group in {"/" + str(g).strip("/") for g in p.get("groups") or ()}
+        )
+
+    def is_member(self, name: str, username: str, *, system: bool = False) -> bool:
+        return username in self.members(name)
+
+    def add_member(self, name: str, username: str, *, system: bool = False) -> None:
+        raise unsupported(self.kind, "changing members")
+
+    def remove_member(self, name: str, username: str, *, system: bool = False) -> None:
+        raise unsupported(self.kind, "changing members")
 
     def system_token(self) -> dict[str, Any]:
         raise unsupported(self.kind, "a system account")

@@ -214,8 +214,16 @@ def test_a_criterion_admin_administers_their_criterion_and_nothing_else(onboarde
     assert kim.members("/criteria/greenfield/developers") == ["lee-member"]
     kim.appoint("greenfield", "lee-member")
     kim.dismiss("greenfield", "lee-member")
+    # its members group (id-DIR-000006), made with the criterion and covered by Kim's permission
+    kim.join_criterion("greenfield", "lee-member")
+    assert kim.criterion_members("greenfield") == ["lee-member"]
+    assert kim.is_criterion_member("greenfield", "lee-member")
+    assert not kim.is_criterion_member("greenfield", "kim-criterion")
+    kim.leave_criterion("greenfield", "lee-member")
+    assert not kim.is_criterion_member("greenfield", "lee-member")
     refused = {
         "another criterion": lambda: kim.add_member("/criteria/other/admins", "lee-member"),
+        "another criterion's members": lambda: kim.join_criterion("other", "lee-member"),
         "its members": lambda: kim.members("/criteria/other/admins"),
         "the catalyst-admins": lambda: kim.add_member("/catalyst-admins", "lee-member"),
         "a user": lambda: kim.create_user("eve-rogue"),
