@@ -19,7 +19,7 @@ manages their criterion's members and is refused on another criterion, and on us
 | Piece                            | At the start                             | At the end                                                       |
 | -------------------------------- | ---------------------------------------- | ---------------------------------------------------------------- |
 | The identity provider (Keycloak) | running, **no `catalyst` realm**         | the realm, its groups, roles, clients and grants                 |
-| catalyst-users on this machine   | no `~/.catalyst-users/IAM/settings.json` | settings naming the provider and the admin (the system account)  |
+| catalyst-users on this machine   | no `~/.catalyst/users/IAM/settings.json` | settings naming the provider and the admin (the system account)  |
 | The admin                        | does not exist                           | a person in the realm, in `/catalyst-admins`                     |
 | The criterion                    | none                                     | `/criteria/<name>`, the admin its first criterion-admin          |
 | The project                      | a folder (a git repository), no catalyst | `catalyst.toml`, its criterion in `~/.catalyst/projects/<name>/` |
@@ -96,8 +96,7 @@ docker run -d --name keycloak-greenfield -p 127.0.0.1:8081:8080 \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=dev-only-admin-password \
   quay.io/keycloak/keycloak:26.4.0 start-dev
 
-export CATALYST_USERS_HOME=~/sandbox/home/catalyst-users   # instead of ~/.catalyst-users
-export CATALYST_HOME=~/sandbox/home/catalyst               # instead of ~/.catalyst
+export CATALYST_HOME=~/sandbox/home/catalyst   # instead of ~/.catalyst (catalyst-users' home too: its users/)
 mkdir -p ~/sandbox/greenfield && git -C ~/sandbox/greenfield init
 
 # a VS Code of its own, which inherits those variables
@@ -133,7 +132,7 @@ catalyst-users then checks the provider:
 
 Signed in, setup readies the realm for criteria (the role `criterion-admin`, the group `/criteria`, and Keycloak's
 fine-grained admin permissions, each only if missing) and adds each `--criterion`, the admin appointed to it
-(`id-PROVIDER-000008`). A refused sign-in writes nothing. On success it writes `$CATALYST_USERS_HOME/IAM/settings.json` (type, username,
+(`id-PROVIDER-000008`). A refused sign-in writes nothing. On success it writes `$CATALYST_HOME/users/IAM/settings.json` (type, username,
 connection settings, password command; never a secret).
 
 ### 4. The UI checks the system account
@@ -248,7 +247,7 @@ rm -rf ~/sandbox/home ~/sandbox/greenfield
 security delete-generic-password -s greenfield@catalyst-users
 ```
 
-Nothing of `~/.catalyst-users`, `~/.catalyst` or the Keycloak on port 8080 is touched.
+Nothing of `~/.catalyst` (catalyst-users' home included) or the Keycloak on port 8080 is touched.
 
 ## What the UI needs
 

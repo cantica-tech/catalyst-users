@@ -91,3 +91,44 @@ def test_settings_precedence(tmp_path, monkeypatch):
 
 def test_the_api_secret_never_appears_in_repr():
     assert "s3cret" not in repr(config.Settings(api_client_secret="s3cret"))
+
+
+# --- catalyst-users' home, in catalyst's (id-PROVIDER-000009) -----------------------------------------
+@pytest.fixture
+def user_home(tmp_path, monkeypatch):
+    """A machine's home with neither CATALYST_USERS_HOME nor CATALYST_HOME set."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CATALYST_USERS_HOME", raising=False)
+    monkeypatch.delenv("CATALYST_HOME", raising=False)
+    return tmp_path
+
+
+def test_the_home_is_users_in_catalysts_home(user_home, monkeypatch):
+    assert config.home() == user_home / ".catalyst" / "users"
+    monkeypatch.setenv("CATALYST_HOME", str(user_home / "sandbox"))
+    assert config.home() == user_home / "sandbox" / "users"
+    monkeypatch.setenv("CATALYST_USERS_HOME", str(user_home / "mine"))
+    assert config.home() == user_home / "mine"
+
+
+def test_an_old_home_is_moved_once_into_catalysts(user_home, capsys):
+    old = user_home / ".catalyst-users" / "IAM"
+    old.mkdir(parents=True)
+    (old / "settings.json").write_text("{}")
+    new = config.home()
+    assert (new / "IAM" / "settings.json").read_text() == "{}"
+    link = user_home / ".catalyst-users"  # left behind, so an earlier catalyst-users still finds the settings
+    assert link.is_symlink() and (link / "IAM" / "settings.json").read_text() == "{}"
+    assert "moved" in capsys.readouterr().err
+    assert config.home() == new and capsys.readouterr().err == ""
+
+
+def test_an_old_home_beside_the_new_is_ignored_and_a_sandbox_never_adopts_it(user_home, monkeypatch, capsys):
+    (user_home / ".catalyst-users").mkdir()
+    monkeypatch.setenv("CATALYST_HOME", str(user_home / "sandbox"))
+    assert config.home() == user_home / "sandbox" / "users"
+    assert (user_home / ".catalyst-users").is_dir() and capsys.readouterr().err == ""
+    monkeypatch.delenv("CATALYST_HOME")
+    (user_home / ".catalyst" / "users").mkdir(parents=True)
+    assert config.home() == user_home / ".catalyst" / "users"
+    assert "is ignored" in capsys.readouterr().err and (user_home / ".catalyst-users").is_dir()

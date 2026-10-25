@@ -1,6 +1,6 @@
 [project]
 name = "catalyst-users"
-version = "0.5.0"
+version = "0.6.0"
 description = "A command-line facade to any identity provider (Keycloak built in, others registered): a stdlib-only core, a CLI and a FastAPI integration"
 readme = "README.md"
 authors = [

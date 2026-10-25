@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 — 2026-10-25
+
+catalyst-users' home is in catalyst's (REQ-000010).
+
+- Changed: the settings, `config.toml` and credentials live in `~/.catalyst/users` (`$CATALYST_HOME/users` when
+  catalyst's home is moved; `CATALYST_USERS_HOME` still names another), beside catalyst's `projects/`. A sandbox moves
+  both with one variable.
+- Added: a `~/.catalyst-users` made by an earlier version is moved there once, the first time it is used, and a link
+  to it left in its place so an earlier catalyst-users, vendored by catalyst, still finds the settings. Beside an
+  existing new home it is ignored, and said so; a home a variable names never adopts it.
+
 ## 0.5.0 — 2026-10-24
 
 Criteria and their admins: the `criterion-admin` (REQ-000009).
