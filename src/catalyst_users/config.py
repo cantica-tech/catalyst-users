@@ -23,8 +23,32 @@ ENV_PREFIX = "CATALYST_USERS_"
 
 
 def home() -> Path:
-    """Where credentials and `config.toml` live (`CATALYST_USERS_HOME`, else `~/.catalyst-users`)."""
-    return Path(os.environ.get(f"{ENV_PREFIX}HOME") or Path.home() / ".catalyst-users")
+    """Where the settings, `config.toml` and credentials live (id-PROVIDER-000009): `CATALYST_USERS_HOME`, else
+    `users/` in catalyst's home (`$CATALYST_HOME/users`, else `~/.catalyst/users`). The default home adopts a
+    `~/.catalyst-users` made before it, once; a home a variable names is never moved into."""
+    explicit = os.environ.get(f"{ENV_PREFIX}HOME")
+    if explicit:
+        return Path(explicit)
+    catalyst_home = os.environ.get("CATALYST_HOME")
+    target = Path(catalyst_home or Path.home() / ".catalyst") / "users"
+    if not catalyst_home:
+        _adopt_legacy(target)
+    return target
+
+
+def _adopt_legacy(target: Path) -> None:
+    import sys
+
+    legacy = Path.home() / ".catalyst-users"
+    if legacy.is_symlink() or not legacy.is_dir():  # adopted already (the link left behind), or none
+        return
+    if target.exists():
+        print(f"catalyst-users: {legacy} is ignored: the settings are in {target}", file=sys.stderr)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    legacy.rename(target)
+    legacy.symlink_to(target, target_is_directory=True)  # an earlier catalyst-users, vendored, still finds it
+    print(f"catalyst-users: moved {legacy} to {target}, leaving a link (its home is in catalyst's)", file=sys.stderr)
 
 
 @dataclass(frozen=True)

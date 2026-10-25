@@ -41,7 +41,7 @@ SECRET_KEYS = ("secret", "credentials", "password", "clientSecret")
 class KeycloakProvider:
     """A Keycloak realm, reached with the device login and userinfo; the directory through the admin API with the
     logged-in person's own rights. `credentials` is where a logged-in person's tokens are kept between commands
-    (`~/.catalyst-users` by default): the people themselves live only in Keycloak."""
+    (catalyst-users' home by default, `config.home()`): the people themselves live only in Keycloak."""
 
     issuer: str
     client: str = "catalyst-cli"
