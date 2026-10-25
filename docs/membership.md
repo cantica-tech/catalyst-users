@@ -4,8 +4,10 @@ How catalyst decides who is a member of a project (a criterion), and what cataly
 summarizes catalyst's design 32, "Project membership" (in the catalyst repository, `docs/design/32-project-membership.md`),
 and design 30, "Visibility", from catalyst-users' side.
 
-**Status (2026-10-25): being built.** catalyst-users' part is in 0.7.0 (`id-DIR-000006`): the membership calls, the
-Keycloak members group and `criteria members`. What exists is marked **today**; catalyst's server side follows.
+**Status (2026-10-25): built.** catalyst-users' part is in 0.7.0 (`id-DIR-000006`): the membership calls, the
+Keycloak members group and `criteria members`. catalyst's server side is in kernel 0.115.0 (`fw-IDENTITY-000012`,
+`fw-IDENTITY-000013`): the ledger, fail-closed admission, `catalyst members`, fingerprints, the master key and
+break-glass. User groups on the server wait for user groups themselves (catalyst's design 30).
 
 ## In one paragraph
 
@@ -136,8 +138,8 @@ alice is criterion-admin of `catalyst-users`; bob is a person of the realm.
 3. **alice removes bob**: `catalyst members remove bob …`. His next request gets `403`, though his token is still
    valid.
 
-4. **Someone adds mallory in the provider's console.** She gets `403`: the ledger does not name her. `catalyst check`
-   reports the drift, and the Admin removes her or adopts the change with a reason (`catalyst members adopt`).
+4. **Someone adds mallory in the provider's console.** She gets `403`: the ledger does not name her. `catalyst serve
+   members check` reports the drift, and the Admin removes her or adopts the change with a reason (`catalyst members adopt`).
 
 ## The ledger, briefly
 
@@ -162,11 +164,11 @@ must be members of the project; only an admin may add a person of the realm from
 
 1. Write an adapter for the new provider, registered through the `catalyst_users.providers` entry point.
 2. Recreate each `/criteria/<name>/members` group from the ledger, the record of who is a member.
-3. `catalyst check` confirms the provider and the ledger agree.
+3. `catalyst serve members check` confirms the provider and the ledger agree.
 
 catalyst and the criteria do not change: the ledger names people by catalyst's user IDs, not the provider's.
 
-## What catalyst-users must build
+## What catalyst-users built (0.7.0)
 
 1. The four membership calls, in the provider protocol and the Keycloak adapter.
 2. `/criteria/<name>/members` created by `setup --criterion` and `criteria add`.
