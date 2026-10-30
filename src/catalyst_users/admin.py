@@ -197,6 +197,51 @@ class KeycloakAdmin:
     def grant_role_to_user(self, username: str, role: str) -> None:
         self._call("POST", f"/users/{self.user(username).id}/role-mappings/realm", body=[self._role(role)])
 
+    # --- who holds which role, both ways (id-DIR-000008) ----------------------
+    # Held directly, or through a group: a group's members, its subgroups' included, inherit its roles. A role
+    # reached only through a composite role is in neither list, so both ways always agree.
+
+    @staticmethod
+    def _within(path: str, group: str) -> bool:
+        return path == group or path.startswith(group + "/")
+
+    def user_roles(self, username: str) -> list[dict[str, Any]]:
+        """Each realm role the user holds: `direct`, and the `groups` it comes through."""
+        user = self.user(username)
+        direct = {r["name"] for r in self._call("GET", f"/users/{user.id}/role-mappings/realm").json()}
+        mine = self.user_groups(username)
+        through: dict[str, set[str]] = {}
+        for group in self.groups():
+            if any(self._within(path, group.path) for path in mine):
+                for role in group.roles:
+                    through.setdefault(role, set()).add(group.path)
+        return [
+            {"name": role, "direct": role in direct, "groups": sorted(through.get(role, ()))}
+            for role in sorted(direct | set(through))
+        ]
+
+    def role_holders(self, role: str) -> dict[str, Any]:
+        """Who holds a realm role: the `groups` granted it, and each holding user, `direct` and the groups it comes
+        through."""
+        self._role(role)  # an unknown role is not found, never "no holders"
+        quoted = urllib.parse.quote(role, safe="")
+        direct = {r["username"] for r in self._call("GET", f"/roles/{quoted}/users", params={"max": 1000}).json()}
+        everyone = self.groups()
+        granted = sorted(g.path for g in everyone if role in g.roles)
+        through: dict[str, set[str]] = {}
+        for group in everyone:
+            sources = [path for path in granted if self._within(group.path, path)]
+            if not sources:
+                continue
+            members = self._call("GET", f"/groups/{group.id}/members", params={"max": 1000}).json()
+            for member in members:
+                through.setdefault(member["username"], set()).update(sources)
+        users = [
+            {"username": name, "direct": name in direct, "groups": sorted(through.get(name, ()))}
+            for name in sorted(direct | set(through))
+        ]
+        return {"role": role, "groups": granted, "users": users}
+
     # --- criteria (id-DIR-000005, id-PROVIDER-000008) -------------------------
     # A criterion is the group /criteria/<name>; its admins, /criteria/<name>/admins, hold the realm role
     # criterion-admin. The realm's fine-grained admin permissions (FGAP v2, Keycloak 26.2+) give that group the

@@ -124,6 +124,63 @@ def test_membership_and_role_grants(admin, transport):
     assert ("DELETE", f"{ADMIN}/users/u-alice/groups/g-dev") in transport.calls()  # a membership, not a user
 
 
+TEAM = [
+    {
+        "id": "g-ct",
+        "name": "cantica-tech",
+        "path": "/cantica-tech",
+        "realmRoles": ["reviewer"],
+        "subGroups": [
+            {"id": "g-dev", "name": "developers", "path": "/cantica-tech/developers", "realmRoles": ["developer"]},
+        ],
+    },
+    {"id": "g-ops", "name": "ops", "path": "/ops", "realmRoles": ["developer"], "subGroups": []},
+]
+BOB = {**ALICE, "id": "u-bob", "username": "bob"}
+
+
+def _team(transport):
+    transport.on("GET", f"{ADMIN}/groups", reply(body=TEAM))
+    transport.on("GET", f"{ADMIN}/users", reply(body=[ALICE]))
+    transport.on("GET", f"{ADMIN}/users/u-alice/role-mappings/realm", reply(body=[{"name": "developer"}]))
+    transport.on("GET", f"{ADMIN}/users/u-alice/groups", reply(body=[{"path": "/cantica-tech/developers"}]))
+
+
+def test_a_users_roles_say_how_each_is_held(admin, transport):
+    """id-DIR-000008: directly, or through a group, a parent group's included."""
+    _team(transport)
+    assert admin.user_roles("alice") == [
+        {"name": "developer", "direct": True, "groups": ["/cantica-tech/developers"]},
+        {"name": "reviewer", "direct": False, "groups": ["/cantica-tech"]},
+    ]
+
+
+def test_a_roles_holders_include_subgroup_members_and_agree_with_user_roles(admin, transport):
+    _team(transport)
+    transport.on("GET", f"{ADMIN}/roles/reviewer", reply(body={"id": "r2", "name": "reviewer"}))
+    transport.on("GET", f"{ADMIN}/roles/reviewer/users", reply(body=[]))
+    transport.on("GET", f"{ADMIN}/groups/g-ct/members", reply(body=[BOB]))
+    transport.on("GET", f"{ADMIN}/groups/g-dev/members", reply(body=[ALICE]))
+    holders = admin.role_holders("reviewer")
+    assert holders == {
+        "role": "reviewer",
+        "groups": ["/cantica-tech"],
+        "users": [
+            {"username": "alice", "direct": False, "groups": ["/cantica-tech"]},
+            {"username": "bob", "direct": False, "groups": ["/cantica-tech"]},
+        ],
+    }
+    alice = next(u for u in holders["users"] if u["username"] == "alice")
+    assert {"name": "reviewer", "direct": alice["direct"], "groups": alice["groups"]} in admin.user_roles("alice")
+    assert transport.calls("POST") == [] and transport.calls("PUT") == []  # reading changes nothing
+
+
+def test_an_unknown_roles_holders_are_not_found(admin, transport):
+    transport.on("GET", f"{ADMIN}/roles/nobody", reply(404))
+    with pytest.raises(NotFoundError):
+        admin.role_holders("nobody")
+
+
 @pytest.mark.parametrize(
     ("status", "raised", "text"),
     [(403, AdminError, "not allowed"), (404, NotFoundError, "not found"), (409, AdminError, "already exists")],
@@ -203,6 +260,22 @@ def test_users_update(wired, capsys):
     assert "Updated alice." in capsys.readouterr().out
     assert cli.main(["users", "update", "alice"]) == 1
     assert "give --email, --first-name or --last-name" in capsys.readouterr().err
+
+
+def test_users_roles_and_roles_holders(wired, capsys):
+    _team(wired)
+    wired.on("GET", f"{ADMIN}/roles/developer", reply(body={"id": "r1", "name": "developer"}))
+    wired.on("GET", f"{ADMIN}/roles/developer/users", reply(body=[ALICE]))
+    wired.on("GET", f"{ADMIN}/groups/g-dev/members", reply(body=[ALICE]))
+    wired.on("GET", f"{ADMIN}/groups/g-ops/members", reply(body=[BOB]))
+    assert cli.main(["users", "roles", "alice"]) == 0
+    out = capsys.readouterr().out
+    assert "developer" in out and "direct, through /cantica-tech/developers" in out
+    assert "reviewer" in out and "through /cantica-tech" in out
+    assert cli.main(["--json", "roles", "holders", "developer"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["groups"] == ["/cantica-tech/developers", "/ops"]
+    assert [u["username"] for u in data["users"]] == ["alice", "bob"]
 
 
 def test_logged_out_is_a_clear_error(monkeypatch, capsys):

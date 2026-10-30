@@ -82,6 +82,7 @@ def _parser() -> argparse.ArgumentParser:
     for action, text in (("disable", "disable a user (users are never deleted)"), ("enable", "enable a user again")):
         users.add_parser(action, help=text).add_argument("username")
     users.add_parser("groups", help="a user's groups").add_argument("username")
+    users.add_parser("roles", help="a user's realm roles: direct, or through which groups").add_argument("username")
 
     groups = sub.add_parser("groups", help="groups").add_subparsers(dest="action", required=True)
     groups.add_parser("list", help="every group, as a tree")
@@ -100,6 +101,9 @@ def _parser() -> argparse.ArgumentParser:
     r = roles.add_parser("add", help="add a realm role")
     r.add_argument("name")
     r.add_argument("--description")
+    roles.add_parser("holders", help="who holds a realm role: users, directly or through which groups").add_argument(
+        "name"
+    )
     r = roles.add_parser("grant", help="grant a realm role to a user")
     r.add_argument("username")
     r.add_argument("role")
@@ -341,7 +345,15 @@ def _users(args: argparse.Namespace, provider: Provider) -> int:
     elif args.action == "groups":
         paths = admin.user_groups(args.username)
         _out(args, paths, "\n".join(paths) or "(no groups)")
+    elif args.action == "roles":
+        held = admin.user_roles(args.username)
+        _out(args, held, "\n".join(f"{r['name']:<24} {_how(r)}" for r in held) or "(no roles)")
     return 0
+
+
+def _how(holding: dict) -> str:
+    """How a role is held (id-DIR-000008): directly, through groups, or both."""
+    return ", ".join((["direct"] if holding["direct"] else []) + [f"through {g}" for g in holding["groups"]])
 
 
 def _read_list(path: str, key: str) -> list:
@@ -396,6 +408,10 @@ def _roles(args: argparse.Namespace, provider: Provider) -> int:
     elif args.action == "add":
         admin.create_role(args.name, args.description)
         _out(args, {"ok": True}, f"Role {args.name} added.")
+    elif args.action == "holders":
+        holders = admin.role_holders(args.name)
+        rows = [f"{u['username']:<24} {_how(u)}" for u in holders["users"]]
+        _out(args, holders, "\n".join(rows) or "(no holders)")
     elif args.action == "grant":
         admin.grant_role_to_user(args.username, args.role)
         _out(args, {"ok": True}, f"{args.username} holds {args.role}.")
