@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 — 2026-10-30
+
+Who holds which role is read both ways (REQ-000015, `id-DIR-000008`).
+
+- Added: `catalyst-users users roles NAME` lists the realm roles a person holds, each directly or through which
+  groups (a parent group's included); `catalyst-users roles holders ROLE` lists the groups granted a role and who
+  holds it, the same way, a subgroup's members included. Both agree; a role reached only through a composite role is
+  in neither. `KeycloakAdmin.user_roles` and `role_holders`; reading changes nothing.
+
 ## 0.9.0 — 2026-10-30
 
 A person may log in with their username and password (REQ-000014, `id-AUTH-000007`).
