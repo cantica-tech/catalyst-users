@@ -153,14 +153,26 @@ class KeycloakProvider:
         settings = _IssuerSettings(self.issuer.rstrip("/"), client or self.client, timeout=self.timeout)
         return OIDCClient(settings, Http(self.transport, timeout=self.timeout))  # type: ignore[arg-type]
 
-    def _session(self):
+    def _session(self, client: str | None = None):
+        """The session of the client the stored login came from: the login client's (device login), else the password
+        client's (a password login, id-AUTH-000007), whose tokens only that client refreshes and revokes."""
         from catalyst_users.credentials import CredentialStore
         from catalyst_users.session import Session
 
-        return Session(self._oidc(), CredentialStore(self.credentials))
+        store = CredentialStore(self.credentials)
+        if client is None:
+            issuer = self.issuer.rstrip("/")
+            password_login = store.load(issuer, self.password_client) is not None
+            client = self.password_client if password_login and store.load(issuer, self.client) is None else self.client
+        return Session(self._oidc(client), store)
 
     def login(self, show: Callable[[Any], None]) -> Whoami:
-        self._session().login(show)
+        self._session(self.client).login(show)
+        return self.whoami()
+
+    def login_password(self, username: str, password: str) -> Whoami:
+        """A person's password login through `password_client` (id-AUTH-000007); the password goes only to the provider."""
+        self._session(self.password_client).login_password(username, password)
         return self.whoami()
 
     def logout(self) -> str | None:

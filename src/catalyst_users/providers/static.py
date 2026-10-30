@@ -62,6 +62,9 @@ class StaticProvider:
     def login(self, show: Callable[[Any], None]) -> Whoami:
         return self.whoami()
 
+    def login_password(self, username: str, password: str) -> Whoami:
+        raise unsupported(self.kind, "a password login")
+
     def logout(self) -> str | None:
         return None
 
