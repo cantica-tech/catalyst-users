@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 — 2026-10-30
+
+A person's details can be changed (REQ-000013, `id-DIR-000007`).
+
+- Added: `KeycloakAdmin.update_user(username, email, first_name, last_name)` and `catalyst-users users update NAME
+  [--email --first-name --last-name]` change only the details given, with the caller's own rights. A changed email is
+  no longer verified. The username is never changed: what people signed names them by it. The static provider
+  refuses, as for every directory change.
+
 ## 0.7.0 — 2026-10-25
 
 A criterion's members (REQ-000012, `id-DIR-000006`).

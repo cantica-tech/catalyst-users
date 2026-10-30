@@ -68,6 +68,11 @@ def _parser() -> argparse.ArgumentParser:
     u.add_argument("--first-name")
     u.add_argument("--last-name")
     u.add_argument("--temporary-password", action="store_true", help="prompt for a password to change at first login")
+    u = users.add_parser("update", help="change a user's email or names (never the username)")
+    u.add_argument("username")
+    u.add_argument("--email")
+    u.add_argument("--first-name")
+    u.add_argument("--last-name")
     for action, text in (("disable", "disable a user (users are never deleted)"), ("enable", "enable a user again")):
         users.add_parser(action, help=text).add_argument("username")
     users.add_parser("groups", help="a user's groups").add_argument("username")
@@ -306,6 +311,11 @@ def _users(args: argparse.Namespace, provider: Provider) -> int:
         password = getpass.getpass("Temporary password: ") if args.temporary_password else None
         user = admin.create_user(args.username, args.email, args.first_name, args.last_name, password)
         _out(args, user.__dict__, f"Added {user.username}.")
+    elif args.action == "update":
+        if args.email is None and args.first_name is None and args.last_name is None:
+            raise CatalystUsersError("users update: give --email, --first-name or --last-name")
+        user = admin.update_user(args.username, args.email, args.first_name, args.last_name)
+        _out(args, user.__dict__, f"Updated {user.username}.")
     elif args.action in ("disable", "enable"):
         user = admin.set_enabled(args.username, args.action == "enable")
         _out(args, user.__dict__, f"{user.username} is {'enabled' if user.enabled else 'disabled'}.")

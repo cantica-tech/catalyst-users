@@ -232,7 +232,7 @@ deployment (`project_name`), the catalyst-admin appointed to each:
 ```sh
 catalyst-users setup --force --type keycloak --provider '{"url": "http://localhost:8080", "realm": "catalyst"}' \
   --username <admin> --password-command "<as before>" \
-  --criterion catalyst --criterion catalyst-ui --criterion catalyst-users --criterion catalyst-users-kb
+  --criterion catalyst --criterion catalyst-ui --criterion catalyst-users
 catalyst-users roles provision keycloak/catalyst-roles.json --login-client catalyst-cli --login-client catalyst-admin-cli
 ```
 

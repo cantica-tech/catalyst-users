@@ -103,6 +103,25 @@ class KeycloakAdmin:
             )
         return self.user(username)
 
+    def update_user(
+        self,
+        username: str,
+        email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+    ) -> User:
+        """Change the details given, and only them (id-DIR-000007); none given changes nothing. A changed email is no
+        longer verified. The username is never changed: what people signed names them by it."""
+        user = self.user(username)
+        rep = {"email": email, "firstName": first_name, "lastName": last_name}
+        changes = {k: v for k, v in rep.items() if v is not None}
+        if not changes:
+            return user
+        if email is not None and email != user.email:
+            changes["emailVerified"] = False
+        self._call("PUT", f"/users/{user.id}", body=changes)
+        return self.user(username)
+
     def set_enabled(self, username: str, enabled: bool) -> User:
         """Disable or re-enable; a user is never deleted (id-DIR-000002)."""
         self._call("PUT", f"/users/{self.user(username).id}", body={"enabled": enabled})

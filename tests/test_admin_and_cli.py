@@ -40,6 +40,34 @@ def test_disable_puts_enabled_false_and_never_deletes(admin, transport):
     assert transport.calls("DELETE") == []
 
 
+def test_update_sends_only_the_details_given_and_unverifies_a_changed_email(admin, transport):
+    transport.on("GET", f"{ADMIN}/users", reply(body=[ALICE]))
+    transport.on("PUT", f"{ADMIN}/users/u-alice", reply(204))
+    admin.update_user("alice", email="new@x", last_name="Dupont")
+    admin.update_user("alice", email="a@x", first_name="Alicia")  # the same email: still verified
+    puts = [json.loads(r.body) for r in transport.requests if r.method == "PUT"]
+    assert puts == [
+        {"email": "new@x", "lastName": "Dupont", "emailVerified": False},
+        {"email": "a@x", "firstName": "Alicia"},
+    ]
+
+
+def test_update_with_no_details_changes_nothing(admin, transport):
+    transport.on("GET", f"{ADMIN}/users", reply(body=[ALICE]))
+    assert admin.update_user("alice").username == "alice"
+    assert transport.calls("PUT") == []
+
+
+def test_update_of_someone_unknown_is_not_found(admin, transport):
+    transport.on("GET", f"{ADMIN}/users", reply(body=[]))
+    with pytest.raises(NotFoundError):
+        admin.update_user("nobody", email="n@x")
+
+
+def test_there_is_no_way_to_rename_a_user():
+    assert not [name for name in dir(KeycloakAdmin) if "rename" in name.lower() or "username" in name.lower()]
+
+
 def test_create_user_with_a_temporary_password(admin, transport):
     transport.on("POST", f"{ADMIN}/users", reply(201, headers={"Location": f"{ADMIN}/users/u-new"}))
     transport.on("PUT", f"{ADMIN}/users/u-new/reset-password", reply(204))
@@ -166,6 +194,15 @@ def test_users_disable(wired, capsys):
     wired.on("PUT", f"{ADMIN}/users/u-alice", reply(204))
     assert cli.main(["users", "disable", "alice"]) == 0
     assert "alice is disabled." in capsys.readouterr().out
+
+
+def test_users_update(wired, capsys):
+    wired.on("GET", f"{ADMIN}/users", reply(body=[{**ALICE, "email": "new@x"}]))
+    wired.on("PUT", f"{ADMIN}/users/u-alice", reply(204))
+    assert cli.main(["users", "update", "alice", "--email", "new@x"]) == 0
+    assert "Updated alice." in capsys.readouterr().out
+    assert cli.main(["users", "update", "alice"]) == 1
+    assert "give --email, --first-name or --last-name" in capsys.readouterr().err
 
 
 def test_logged_out_is_a_clear_error(monkeypatch, capsys):
