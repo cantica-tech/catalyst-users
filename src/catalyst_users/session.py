@@ -29,6 +29,12 @@ class Session:
         self.store.save(*self._key, tokens)
         return self.identity()
 
+    def login_password(self, username: str, password: str) -> Identity:
+        """Password login (id-AUTH-000007) through this session's client: the password goes only to the provider."""
+        tokens = self.oidc.password_grant(self.oidc.settings.client_id, username, password)
+        self.store.save(*self._key, tokens)
+        return self.identity()
+
     def tokens(self) -> Tokens:
         """Stored tokens, refreshed when the access token expires within 30 seconds."""
         tokens = self.store.load(*self._key)
