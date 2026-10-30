@@ -245,3 +245,81 @@ def test_the_cli_reaches_a_registered_provider(entry_points, tmp_path, capsys):
     pointer.write_text(json.dumps({"provider": "acme", "tenant": "t9"}))
     assert cli.main(["--pointer", str(pointer), "whoami", "--system"]) == 0
     assert "system@t9 (System)" in capsys.readouterr().out
+
+
+# --- a person's password login (id-AUTH-000007) ----------------------------------------
+
+
+def _last_post(transport, url: str) -> dict[str, str]:
+    """The form of the last POST to `url`."""
+    index = max(i for i, r in enumerate(transport.requests) if r.method == "POST" and r.url == url)
+    return transport.form(index)
+
+
+def _person(transport, tmp_path) -> KeycloakProvider:
+    tokens = {"access_token": "at-alice", "refresh_token": "rt-alice", "expires_in": 300}
+    transport.on("POST", f"{OIDC}/token", reply(body=tokens))
+    transport.on("GET", f"{OIDC}/userinfo", reply(body={"sub": "u-2", "preferred_username": "alice", "name": "Alice"}))
+    return KeycloakProvider(issuer=ISSUER, transport=transport, credentials=tmp_path / "credentials.json")
+
+
+def test_a_person_logs_in_with_a_password_through_the_password_client(transport, tmp_path):
+    provider = _person(transport, tmp_path)
+    who = provider.login_password("alice", "pw-1")
+    assert who.username == "alice"
+    assert _last_post(transport, f"{OIDC}/token") == {
+        "grant_type": "password",
+        "client_id": "catalyst-admin-cli",
+        "username": "alice",
+        "password": "pw-1",
+        "scope": "openid",
+    }
+    stored = json.loads((tmp_path / "credentials.json").read_text())
+    assert stored["client_id"] == "catalyst-admin-cli" and "pw-1" not in json.dumps(stored)
+
+
+def test_a_password_login_is_refreshed_and_revoked_through_its_client(transport, tmp_path):
+    provider = _person(transport, tmp_path)
+    provider.login_password("alice", "pw-1")
+    stored = json.loads((tmp_path / "credentials.json").read_text())
+    stored["tokens"]["expires_at"] = 0  # expired: the next call refreshes
+    (tmp_path / "credentials.json").write_text(json.dumps(stored))
+    assert provider.token() == "at-alice"
+    refresh = _last_post(transport, f"{OIDC}/token")
+    assert (refresh["grant_type"], refresh["client_id"]) == ("refresh_token", "catalyst-admin-cli")
+    transport.on("POST", f"{OIDC}/revoke", reply(200))
+    provider.logout()
+    assert _last_post(transport, f"{OIDC}/revoke")["client_id"] == "catalyst-admin-cli"
+
+
+def test_a_refused_password_login_never_shows_the_password(transport, tmp_path):
+    provider = _person(transport, tmp_path)
+    transport.on(
+        "POST", f"{OIDC}/token", reply(401, {"error": "invalid_grant", "error_description": "Invalid user credentials"})
+    )
+    with pytest.raises(config.CatalystUsersError) as refused:
+        provider.login_password("alice", "wrong-pw")
+    assert "wrong-pw" not in str(refused.value)
+    assert not (tmp_path / "credentials.json").exists()
+
+
+def test_login_password_reads_the_password_from_standard_input(transport, tmp_path, monkeypatch, capsys):
+    import io
+
+    provider = _person(transport, tmp_path)
+    monkeypatch.setattr(cli, "_provider", lambda args: provider)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pw-1\n"))
+    assert cli.main(["--json", "login", "--password", "--username", "alice"]) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out)["username"] == "alice" and "pw-1" not in out.out + out.err
+    assert _last_post(transport, f"{OIDC}/token")["password"] == "pw-1"
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pw-1\n"))
+    assert cli.main(["login", "--password"]) == 1  # no terminal to ask the username
+    assert "needs --username" in capsys.readouterr().err
+
+
+def test_the_static_provider_refuses_a_password_login():
+    from catalyst_users.providers.static import StaticProvider
+
+    with pytest.raises(ProviderError, match="password login"):
+        StaticProvider.__new__(StaticProvider).login_password("alice", "pw")

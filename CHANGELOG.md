@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0 — 2026-10-30
+
+A person may log in with their username and password (REQ-000014, `id-AUTH-000007`).
+
+- Added: `catalyst-users login --password [--username NAME]` logs a person in without the provider's web page. The
+  password is read from standard input (one line) when it is not a terminal, else asked without echo; it is sent
+  once, to the provider's token endpoint through its password client (Keycloak: `password_client`), and never stored,
+  logged or shown. The tokens are kept as a device login's, and refreshed and revoked through the client that issued
+  them. `id-AUTH-000001` is amended: a person's password passes through catalyst-users only on this request.
+- Added: `Provider.login_password(username, password)`; the static provider refuses it.
+
 ## 0.8.0 — 2026-10-30
 
 A person's details can be changed (REQ-000013, `id-DIR-000007`).

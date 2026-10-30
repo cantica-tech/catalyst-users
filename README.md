@@ -64,7 +64,7 @@ Every command goes through the configured provider ([Configuration](#configurati
 | Command | What it does |
 | --- | --- |
 | `providers` | The registered providers, and where each comes from. |
-| `login` | Device login: shows a link and a code, waits for you to approve in the browser. No password passes through catalyst-users. |
+| `login [--password [--username NAME]]` | Device login: shows a link and a code, waits for you to approve in the browser; no password passes through catalyst-users. With `--password`: your username and password instead, the password read from standard input (one line) or asked without echo, sent only to the provider's token endpoint through its password client, never stored or shown (`id-AUTH-000007`). |
 | `whoami [--json] [--system]` | Your username, subject, issuer, groups, roles, catalyst grants and the criteria you administer; with `--system`, the local system account's. |
 | `token [--json] [--system]` | Prints a fresh access token, to pass to an API; with `--system`, the local system account's ([below](#the-local-system-account)). Keep it secret. |
 | `logout` | Revokes your session at Keycloak and deletes the local credentials. |

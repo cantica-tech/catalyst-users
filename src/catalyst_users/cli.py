@@ -52,7 +52,13 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="a criterion to add, the admin appointed to it (repeatable; catalyst's deployments' project names)",
     )
-    sub.add_parser("login", help="log in with a code shown in your browser")
+    li = sub.add_parser("login", help="log in with a code shown in your browser, or --password")
+    li.add_argument(
+        "--password",
+        action="store_true",
+        help="log in with your username and password instead: read from standard input, else asked (id-AUTH-000007)",
+    )
+    li.add_argument("--username", help="with --password: who logs in (asked when not given)")
     sub.add_parser("logout", help="revoke your session and delete local credentials")
     w = sub.add_parser("whoami", help="who you are: groups and roles")
     w.add_argument("--system", action="store_true", help="the local system account instead (signs it in)")
@@ -187,6 +193,19 @@ def _password(command: str | None, prompt: str) -> tuple[str, str | None]:
     return password, None
 
 
+def _credentials(username: str | None) -> tuple[str, str]:
+    """A password login's username and password (id-AUTH-000007): the password one line of standard input when it is
+    not a terminal, else asked without echo; never an argument, never shown."""
+    if not username:
+        if not sys.stdin.isatty():
+            raise CatalystUsersError("login --password needs --username when standard input is not a terminal")
+        username = input("Username: ").strip()
+    password = sys.stdin.readline().rstrip("\r\n") if not sys.stdin.isatty() else getpass.getpass("Password: ")
+    if not username or not password:
+        raise CatalystUsersError("login --password needs a username and a password")
+    return username, password
+
+
 def _setup(args: argparse.Namespace) -> int:
     from catalyst_users import keychain
     from catalyst_users.provider import provider_class
@@ -273,7 +292,7 @@ def _run(args: argparse.Namespace) -> int:
     provider = _provider(args)
 
     if args.command == "login":
-        who = provider.login(_show_code)
+        who = provider.login_password(*_credentials(args.username)) if args.password else provider.login(_show_code)
         _out(args, who.signer(), f"Logged in as {who.username} ({who.name}).")
         return 0
     if args.command == "logout":
