@@ -1,0 +1,20 @@
+# cantica-tech code standards (https://github.com/cantica-tech/standards): the repository's copy of the
+# standards is in sync, and the standard lint (Ruff, markdownlint, yamllint, actionlint, zizmor) and Pyright
+# pass, exactly as `task --taskfile ../standards/Taskfile.standards.yml --dir . standards:lint` (and
+# `standards:typecheck`) run them locally.
+name: Standards
+
+on:
+  pull_request:
+  push:
+    branches: [development]
+
+permissions:
+  contents: read
+
+jobs:
+  standards:
+    uses: cantica-tech/standards/.github/workflows/lint.yml@v0.1.2
+    with:
+      ref: v0.1.2
+      typecheck: true

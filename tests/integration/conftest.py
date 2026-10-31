@@ -8,13 +8,21 @@ import http.cookiejar
 import json
 import os
 import re
+import sys
 import urllib.parse
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from catalyst_users.admin import KeycloakAdmin
 from catalyst_users.config import Settings
 from catalyst_users.oidc import DeviceCode
+
+KEYCLOAK = Path(__file__).resolve().parents[2] / "keycloak"
+# The integration tests' own client (catalyst-tests: a password grant for test people), never in the dev realm file.
+TEST_REALM_FILE = KEYCLOAK / "realm-catalyst-tests.json"
 
 SERVER = os.environ.get("CATALYST_USERS_IT_SERVER", "http://127.0.0.1:8080")
 DEV_PASSWORD = "dev-only-{}-password"  # the test people's (PEOPLE, below)
@@ -38,7 +46,7 @@ PEOPLE = {
 }
 
 
-def _admin_call(method: str, path: str, body: object = None) -> object:
+def _admin_call(method: str, path: str, body: object = None) -> Any:
     req = urllib.request.Request(  # noqa: S310 - loopback test server
         f"{SERVER}/admin/realms/catalyst{path}",
         method=method,
@@ -56,6 +64,7 @@ def dev_people() -> None:
     ask for it; the onboarding tests bring a Keycloak of their own)."""
     if os.environ.get("CATALYST_USERS_IT") != "1":
         return
+    ensure_test_clients()
     for username, (first, last, group) in PEOPLE.items():
         found = _admin_call("GET", f"/users?username={username}&exact=true")
         if not found:
@@ -67,6 +76,18 @@ def dev_people() -> None:
         _admin_call("PUT", f"/users/{user}/reset-password", reset)
         target = _admin_call("GET", "/group-by-path/" + group.strip("/"))
         _admin_call("PUT", f"/users/{user}/groups/{target['id']}")
+
+
+def ensure_test_clients() -> list[str]:
+    """The test realm file's clients, added to the realm when it lacks them (as keycloak/sync_clients.py adds them),
+    through the master admin: the dev realm file carries none of them."""
+    sys.path.insert(0, str(KEYCLOAK))  # the scripts import each other as siblings
+    import sync_clients
+
+    token = bootstrap_token()
+    admin = KeycloakAdmin(Settings(server_url=SERVER, realm="catalyst"), lambda: token)
+    declared = sync_clients.declared_clients(json.loads(TEST_REALM_FILE.read_text()), TEST_REALM_FILE.name)
+    return [added for client in declared for added in sync_clients.sync_client(admin, client)]
 
 
 def api_secret() -> str:
@@ -120,15 +141,18 @@ def approve_device(code: DeviceCode, username: str, password: str | None = None)
     """What a person does in the browser: open the link, sign in (with a test person's password unless given), grant
     access."""
     policy = http.cookiejar.DefaultCookiePolicy()
-    policy.secure_protocols = ("https", "wss", "http")  # browsers treat loopback http as secure; urllib does not
+    # browsers treat loopback http as secure; urllib does not
+    policy.secure_protocols = ("https", "wss", "http")  # pyright: ignore[reportAttributeAccessIssue]
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar(policy)))
 
     def form_action(page: str, form_id: str | None = None) -> str:
         pattern = rf'<form[^>]*id="{form_id}"[^>]*action="([^"]+)"' if form_id else r'<form[^>]*action="([^"]+)"'
-        action = html.unescape(re.search(pattern, page).group(1))
-        return urllib.parse.urljoin(code.verification_uri_complete, action)
+        found = re.search(pattern, page)
+        assert found, f"no form in the page ({form_id or 'any'})"
+        return urllib.parse.urljoin(link, html.unescape(found.group(1)))
 
-    page = opener.open(code.verification_uri_complete, timeout=10).read().decode()
+    link = code.verification_uri_complete or code.verification_uri
+    page = opener.open(link, timeout=10).read().decode()
     credentials = {"username": username, "password": password or DEV_PASSWORD.format(username)}
     page = opener.open(form_action(page, "kc-form-login"), urllib.parse.urlencode(credentials).encode()).read().decode()
     hidden = dict(re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page))

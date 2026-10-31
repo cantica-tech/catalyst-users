@@ -48,6 +48,7 @@ def test_device_login_whoami_refresh_logout(oidc, settings):
     assert who.in_group("/cantica-tech") and who.has_role("stakeholder")  # inherited from the parent group
 
     stored = session.store.load(settings.issuer, settings.client_id)
+    assert stored is not None
     refreshed = oidc.refresh(stored)
     assert refreshed.access_token != stored.access_token
 

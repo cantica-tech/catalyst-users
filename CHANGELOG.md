@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.0 — 2026-10-31
+
+Identity coherence across loopback spellings, honest setup, global options anywhere, and a dev realm without a test
+client (BUG-000047, BUG-000048, BUG-000049, BUG-000050, REQ-000016).
+
+- Fixed: `localhost`, `127.0.0.1` and `::1` name one provider when issuers are matched (`config.canonical_issuer`,
+  `config.same_issuer`): discovery's issuer, an introspected token's `iss`, and settings.json's system account
+  (BUG-000047, `id-AUTH-000006`). Calls keep the URL they were given, since Keycloak mints a token's `iss` from the
+  host it was called by and refuses that token at another host.
+- Added: `config.system_pointer(issuer, client=None)`, settings.json's pointer with its system account for the
+  provider at `issuer`, reached as `issuer` spells it; None for another provider. A client that matches its own
+  issuer against settings.json (catalyst's kernel) can use it.
+- Fixed: explicit `--server`, `--realm`, `--client-id` or their `CATALYST_USERS_*` variables naming settings.json's
+  own provider keep its system account, so `CATALYST_USERS_SERVER=http://127.0.0.1:8080 catalyst-users token
+  --system` works (BUG-000049).
+- Fixed: `setup` exits 1 when the provider is unreachable; the settings are still written, unchecked, and it says to
+  run `setup --force` once the provider is up (BUG-000048, `id-PROVIDER-000006`).
+- Fixed: the global options (`--json`, `--pointer`, `--server`, `--realm`, `--client-id`) are accepted after the
+  command too: `catalyst-users whoami --json`. `token --system`'s help names the password grant, not client
+  credentials (BUG-000050).
+- Changed: the dev realm file no longer declares `catalyst-tests`. The integration tests' client is in
+  `keycloak/realm-catalyst-tests.json`, which the tests add to the realm they run against when it lacks it;
+  `sync_clients.py --realm-file` reads such a file. A running dev realm keeps the client it has (REQ-000016,
+  `env-LOCAL-000001`).
+- Changed: `keycloak/set_admin.py` keeps the other members of `/catalyst-admins`, and lists them; `--sole-admin`
+  removes them, as it always did before (REQ-000016, `env-LOCAL-000002`).
+- Chore: Ruff pinned at 0.16.10 (the cantica-tech standards' version) and the lock upgraded (FastAPI 0.162.0,
+  Starlette 1.10.0, pytest 9.2.0); the standards synced to v0.1.2, and CI runs their reusable lint workflow with
+  Pyright (typing-only fixes); `docs/development/python-identity-libraries.md` §10 and §11 marked decided.
+
 ## 0.10.0 — 2026-10-30
 
 Who holds which role is read both ways (REQ-000015, `id-DIR-000008`).

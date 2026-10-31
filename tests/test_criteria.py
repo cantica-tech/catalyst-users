@@ -105,19 +105,19 @@ class Realm:
         return [{**g, "subGroups": self._tree(g["path"])} for g in kids]
 
     def _put_realm(self, request: Request):
-        self.realm = json.loads(request.body)
+        self.realm = json.loads(request.body or b"")
         return reply(204)
 
     def _post_role(self, request: Request):
-        self.roles.append(json.loads(request.body)["name"])
+        self.roles.append(json.loads(request.body or b"")["name"])
         return reply(201)
 
     def _post_group(self, parent: str, request: Request):
-        self._group(f"{parent}/{json.loads(request.body)['name']}")
+        self._group(f"{parent}/{json.loads(request.body or b'')['name']}")
         return reply(201)
 
     def _map(self, path: str, request: Request):
-        for role in json.loads(request.body):
+        for role in json.loads(request.body or b""):
             self.groups[path]["realmRoles"].append(role["name"])
             self.role_mappings.append((path, role["name"]))
         return reply(204)
@@ -127,7 +127,7 @@ class Realm:
         return reply(body=[i for i in items if name in i["name"]])
 
     def _add(self, items: list[dict], request: Request):
-        item = {**json.loads(request.body), "id": f"p{len(self.policies) + len(self.permissions)}"}
+        item = {**json.loads(request.body or b""), "id": f"p{len(self.policies) + len(self.permissions)}"}
         items.append(item)
         self.t.on("PUT", f"{AUTHZ}/permission/scope/{item['id']}", lambda r: self._put_permission(item, r))
         self.t.on("GET", f"{AUTHZ}/policy/{item['id']}/resources", lambda r: self._resources(item))
@@ -135,7 +135,7 @@ class Realm:
         return reply(201)
 
     def _put_permission(self, item: dict, request: Request):
-        item.update(json.loads(request.body))
+        item.update(json.loads(request.body or b""))
         return reply(204)
 
     def _associated(self, item: dict):
