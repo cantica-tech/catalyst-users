@@ -2,6 +2,7 @@
 static backend's guard."""
 
 import json
+from typing import cast
 
 import pytest
 
@@ -77,7 +78,9 @@ def test_the_keycloak_provider_reads_userinfo(settings, transport, tmp_path):
 def test_the_pointer_chooses_the_backend(monkeypatch):
     monkeypatch.delenv(STATIC_FLAG, raising=False)
     kc = from_pointer({"provider": "keycloak", "issuer": ISSUER})
-    assert isinstance(kc, KeycloakProvider) and kc.catalyst_client == "catalyst" and kc.client == "catalyst-cli"
+    assert isinstance(kc, KeycloakProvider)
+    kc = cast(KeycloakProvider, kc)
+    assert kc.catalyst_client == "catalyst" and kc.client == "catalyst-cli"
     with pytest.raises(ProviderError, match='needs a "url"'):
         from_pointer({"provider": "keycloak"})
     by_url = from_pointer({"provider": "keycloak", "url": "https://id.example.com/", "realm": "catalyst"})

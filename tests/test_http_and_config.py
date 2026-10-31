@@ -40,7 +40,7 @@ def test_redirects_are_not_followed():
             self.send_header("Location", "http://127.0.0.1:9/elsewhere")
             self.end_headers()
 
-        def log_message(self, *args):
+        def log_message(self, format, *args):
             pass
 
     server = HTTPServer(("127.0.0.1", 0), Redirect)

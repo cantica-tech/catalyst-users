@@ -114,7 +114,7 @@ class KeycloakAdmin:
         longer verified. The username is never changed: what people signed names them by it."""
         user = self.user(username)
         rep = {"email": email, "firstName": first_name, "lastName": last_name}
-        changes = {k: v for k, v in rep.items() if v is not None}
+        changes: dict[str, str | bool] = {k: v for k, v in rep.items() if v is not None}
         if not changes:
             return user
         if email is not None and email != user.email:

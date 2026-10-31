@@ -1,0 +1,22 @@
+# cantica-tech EditorConfig — synced into each repository by `task standards:sync`.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false   # a trailing double space is a Markdown line break
+
+[Makefile]
+indent_style = tab
+
+[*.{cmd,bat,ps1}]
+end_of_line = crlf

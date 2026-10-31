@@ -10,6 +10,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from typing import Any
 
 import pytest
 
@@ -38,7 +39,7 @@ PEOPLE = {
 }
 
 
-def _admin_call(method: str, path: str, body: object = None) -> object:
+def _admin_call(method: str, path: str, body: object = None) -> Any:
     req = urllib.request.Request(  # noqa: S310 - loopback test server
         f"{SERVER}/admin/realms/catalyst{path}",
         method=method,
@@ -120,15 +121,18 @@ def approve_device(code: DeviceCode, username: str, password: str | None = None)
     """What a person does in the browser: open the link, sign in (with a test person's password unless given), grant
     access."""
     policy = http.cookiejar.DefaultCookiePolicy()
-    policy.secure_protocols = ("https", "wss", "http")  # browsers treat loopback http as secure; urllib does not
+    # browsers treat loopback http as secure; urllib does not
+    policy.secure_protocols = ("https", "wss", "http")  # pyright: ignore[reportAttributeAccessIssue]
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar(policy)))
 
     def form_action(page: str, form_id: str | None = None) -> str:
         pattern = rf'<form[^>]*id="{form_id}"[^>]*action="([^"]+)"' if form_id else r'<form[^>]*action="([^"]+)"'
-        action = html.unescape(re.search(pattern, page).group(1))
-        return urllib.parse.urljoin(code.verification_uri_complete, action)
+        found = re.search(pattern, page)
+        assert found, f"no form in the page ({form_id or 'any'})"
+        return urllib.parse.urljoin(link, html.unescape(found.group(1)))
 
-    page = opener.open(code.verification_uri_complete, timeout=10).read().decode()
+    link = code.verification_uri_complete or code.verification_uri
+    page = opener.open(link, timeout=10).read().decode()
     credentials = {"username": username, "password": password or DEV_PASSWORD.format(username)}
     page = opener.open(form_action(page, "kc-form-login"), urllib.parse.urlencode(credentials).encode()).read().decode()
     hidden = dict(re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page))

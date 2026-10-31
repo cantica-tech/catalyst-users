@@ -21,7 +21,7 @@ dev = [
     "fastapi>=0.115",  # the extra, so a plain `uv run pytest` can import fastapi_auth
     "httpx2>=2.16.0",
     "pytest>=8",
-    "ruff>=0.7",
+    "ruff==0.16.10",  # the version cantica-tech/standards runs (v0.1.2)
     "uvicorn>=0.30",
 ]
 

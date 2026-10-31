@@ -1,0 +1,7 @@
+// cantica-tech Python type-checking standard: `standard` everywhere, `strict` listed per module by each repository.
+{
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "error",
+  "reportUnnecessaryTypeIgnoreComment": "warning"
+}

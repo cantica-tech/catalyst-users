@@ -1,0 +1,9 @@
+# cantica-tech GitHub Actions security standard (zizmor). Synced as `.standards/zizmor.yml`.
+# Third-party actions are pinned to a commit SHA; cantica-tech's own reusable workflows may be pinned
+# to a release tag (they are versioned here, released like everything else).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "cantica-tech/*": ref-pin
+        "*": hash-pin
