@@ -8,14 +8,21 @@ import http.cookiejar
 import json
 import os
 import re
+import sys
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from catalyst_users.admin import KeycloakAdmin
 from catalyst_users.config import Settings
 from catalyst_users.oidc import DeviceCode
+
+KEYCLOAK = Path(__file__).resolve().parents[2] / "keycloak"
+# The integration tests' own client (catalyst-tests: a password grant for test people), never in the dev realm file.
+TEST_REALM_FILE = KEYCLOAK / "realm-catalyst-tests.json"
 
 SERVER = os.environ.get("CATALYST_USERS_IT_SERVER", "http://127.0.0.1:8080")
 DEV_PASSWORD = "dev-only-{}-password"  # the test people's (PEOPLE, below)
@@ -57,6 +64,7 @@ def dev_people() -> None:
     ask for it; the onboarding tests bring a Keycloak of their own)."""
     if os.environ.get("CATALYST_USERS_IT") != "1":
         return
+    ensure_test_clients()
     for username, (first, last, group) in PEOPLE.items():
         found = _admin_call("GET", f"/users?username={username}&exact=true")
         if not found:
@@ -68,6 +76,18 @@ def dev_people() -> None:
         _admin_call("PUT", f"/users/{user}/reset-password", reset)
         target = _admin_call("GET", "/group-by-path/" + group.strip("/"))
         _admin_call("PUT", f"/users/{user}/groups/{target['id']}")
+
+
+def ensure_test_clients() -> list[str]:
+    """The test realm file's clients, added to the realm when it lacks them (as keycloak/sync_clients.py adds them),
+    through the master admin: the dev realm file carries none of them."""
+    sys.path.insert(0, str(KEYCLOAK))  # the scripts import each other as siblings
+    import sync_clients
+
+    token = bootstrap_token()
+    admin = KeycloakAdmin(Settings(server_url=SERVER, realm="catalyst"), lambda: token)
+    declared = sync_clients.declared_clients(json.loads(TEST_REALM_FILE.read_text()), TEST_REALM_FILE.name)
+    return [added for client in declared for added in sync_clients.sync_client(admin, client)]
 
 
 def api_secret() -> str:

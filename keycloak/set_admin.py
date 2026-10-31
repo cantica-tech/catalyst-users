@@ -1,10 +1,11 @@
-"""Make the owner the dev realm's only admin, from the macOS keychain (env-LOCAL-000002).
+"""Make the owner an admin of the dev realm, from the macOS keychain (env-LOCAL-000002).
 
-    uv run python keycloak/set_admin.py --email you@example.com
+    uv run python keycloak/set_admin.py --email you@example.com [--sole-admin]
 
 The username is the keychain item's account (`security find-generic-password -s <service>`, its `acct`), the
 password its secret (`-w`). The user is created or updated in realm `catalyst` (email verified, enabled, the password
-not temporary), made a member of `/catalyst-admins`, and every other member is removed from it. Nothing read from the
+not temporary) and made a member of `/catalyst-admins`. The group's other members stay, and are listed; with
+`--sole-admin`, they are removed from it (never deleted), so the owner is its only member. Nothing read from the
 keychain is printed or written anywhere; the password travels only in the request to Keycloak. The admin API is
 reached as Keycloak's dev bootstrap admin (`compose.yaml`), on the loopback address only.
 """
@@ -63,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--server", default="http://127.0.0.1:8080")
     p.add_argument("--first-name", help="default: the first word of `git config user.name`")
     p.add_argument("--last-name", help="default: the rest of `git config user.name`")
+    p.add_argument(
+        "--sole-admin",
+        action="store_true",
+        help=f"remove every other member of {ADMINS} (never the person), so the owner is its only member",
+    )
     args = p.parse_args(argv)
 
     username, password = keychain(args.service)
@@ -89,15 +95,22 @@ def main(argv: list[str] | None = None) -> int:
             "PUT", f"/users/{user.id}/reset-password", body={"type": "password", "value": password, "temporary": False}
         )
         admin.add_member(ADMINS, username)
-        removed = [m for m in admin.members(ADMINS) if m != username.lower()]
-        for other in removed:
-            admin.remove_member(ADMINS, other)
+        others = [m for m in admin.members(ADMINS) if m != username.lower()]
+        if args.sole_admin:
+            for other in others:
+                admin.remove_member(ADMINS, other)
     except CatalystUsersError as err:
         print(f"set_admin: {err}", file=sys.stderr)
         return 1
-    print(f"{'created' if created else 'updated'} the realm's admin; {ADMINS} now holds only them")
-    if removed:
-        print(f"removed from {ADMINS}: {', '.join(removed)}")
+    done = "created" if created else "updated"
+    if args.sole_admin:
+        print(f"{done} the realm's admin; {ADMINS} now holds only them")
+        if others:
+            print(f"removed from {ADMINS}: {', '.join(others)}")
+    else:
+        print(f"{done} the realm's admin, a member of {ADMINS}")
+        if others:
+            print(f"also in {ADMINS} (kept; --sole-admin removes them): {', '.join(others)}")
     return 0
 
 
