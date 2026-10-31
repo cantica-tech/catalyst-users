@@ -1,12 +1,14 @@
 """Add to the running dev realm the clients the realm file declares and it lacks (env-LOCAL-000003).
 
-    uv run python keycloak/sync_clients.py
+    uv run python keycloak/sync_clients.py [--realm-file keycloak/realm-catalyst-tests.json]
 
 The dev realm persists (`.keycloack/`, env-LOCAL-000002), so a client added to `keycloak/realm-catalyst.json` after
 its first start never reaches it by import. Each declared client the realm lacks is created from its declaration
 (which holds no secret, id-PROVIDER-000007: Keycloak generates a confidential client's), and each declared protocol
 mapper a client lacks is added. It adds, never changes or deletes, and prints no secret. The admin API is reached as
-Keycloak's dev bootstrap admin (`compose.yaml`), on the loopback address only.
+Keycloak's dev bootstrap admin (`compose.yaml`), on the loopback address only. `--realm-file` names another file
+of the same shape: `realm-catalyst-tests.json` holds the integration tests' client, which the dev realm does not
+carry; the tests add it themselves (`tests/integration/conftest.py`).
 """
 
 from __future__ import annotations
@@ -33,10 +35,10 @@ class Admin(Protocol):
     def _call(self, method: str, path: str, *, params: dict[str, Any] | None = None, body: Any = None) -> Response: ...
 
 
-def declared_clients(realm: dict[str, Any]) -> list[dict[str, Any]]:
+def declared_clients(realm: dict[str, Any], name: str = REALM_FILE.name) -> list[dict[str, Any]]:
     """The realm file's clients; the file must hold no person or secret."""
     if problems := definition_problems(realm):
-        raise SystemExit(f"sync_clients: {REALM_FILE.name}: {problems[0]}")
+        raise SystemExit(f"sync_clients: {name}: {problems[0]}")
     return list(realm.get("clients", []))
 
 
@@ -60,9 +62,10 @@ def sync_client(admin: Admin, declaration: dict[str, Any]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     p.add_argument("--server", default="http://127.0.0.1:8080")
+    p.add_argument("--realm-file", type=Path, default=REALM_FILE, help="the realm file declaring the clients")
     args = p.parse_args(argv)
 
-    clients = declared_clients(json.loads(REALM_FILE.read_text()))
+    clients = declared_clients(json.loads(args.realm_file.read_text()), args.realm_file.name)
     boot_user = os.environ.get("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
     boot_password = os.environ.get("KC_BOOTSTRAP_ADMIN_PASSWORD", "dev-only-admin-password")
     token = bootstrap_token(args.server, boot_user, boot_password)

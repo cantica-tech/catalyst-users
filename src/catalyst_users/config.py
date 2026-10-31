@@ -2,8 +2,9 @@
 
 The provider is chosen by a pointer document (`pointer`): `--pointer FILE` or `CATALYST_USERS_POINTER`, else
 `IAM/settings.json` (written by `catalyst-users setup`), else `config.toml`'s `provider = "<name>"` with its
-`[<name>]` table, else explicit Keycloak settings (flags or environment), which win over settings.json and config.toml. With none of them, `NoSettingsError`: a
-terminal is asked to run setup. The Keycloak settings
+`[<name>]` table, else explicit Keycloak settings (flags or environment), which win over settings.json and config.toml:
+when they name settings.json's own provider, its system account is kept (`system_pointer`). With none of them,
+`NoSettingsError`: a terminal is asked to run setup. The Keycloak settings
 (`Settings`) keep their own precedence, lowest first: defaults, `config.toml`'s top-level keys, `CATALYST_USERS_*`
 environment variables, explicit overrides; given explicitly, they win over the `[keycloak]` table.
 """
@@ -13,13 +14,39 @@ from __future__ import annotations
 import json
 import os
 import tomllib
+import urllib.parse
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
 from catalyst_users.errors import CatalystUsersError
+from catalyst_users.http import LOOPBACK
 
 ENV_PREFIX = "CATALYST_USERS_"
+
+
+def canonical_issuer(issuer: str) -> str:
+    """An issuer as one provider is named, whatever its spelling: no trailing `/`, the scheme and host in lower case,
+    and a loopback host (`localhost`, `127.0.0.1`, `::1`) spelled `localhost`, since all three reach this machine.
+    For matching only: Keycloak mints a token's `iss` from the host it was called by, so calls keep their own URL."""
+    parts = urllib.parse.urlsplit(str(issuer).strip().rstrip("/"))
+    host = (parts.hostname or "").lower()
+    if host in LOOPBACK:
+        host = "localhost"
+    elif ":" in host:
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:  # not a URL with a port: compared as written
+        return str(issuer).strip().rstrip("/")
+    netloc = host + (f":{port}" if port else "")
+    return urllib.parse.urlunsplit((parts.scheme.lower(), netloc, parts.path, parts.query, parts.fragment))
+
+
+def same_issuer(a: str | None, b: str | None) -> bool:
+    """Whether two issuers name the same provider (`canonical_issuer`): `http://127.0.0.1:8080/realms/catalyst` and
+    `http://localhost:8080/realms/catalyst/` do."""
+    return bool(a) and bool(b) and canonical_issuer(str(a)) == canonical_issuer(str(b))
 
 
 def home() -> Path:
@@ -144,6 +171,29 @@ def settings_pointer(doc: dict[str, Any]) -> dict[str, Any]:
     return pointer
 
 
+def system_pointer(issuer: str, client: str | None = None) -> dict[str, Any] | None:
+    """settings.json's pointer, with its system account, for the provider at `issuer`; None when settings.json names
+    another provider (or none, or no system account). The provider is reached as `issuer` spells it, so its tokens
+    and their `iss` are that spelling's; `client`, given, replaces the login client (id-AUTH-000006)."""
+    stored = read_settings()
+    if stored is None or not stored.get("username") or not stored.get("password_command"):
+        return None
+    doc = settings_pointer(stored)
+    from catalyst_users.provider import from_pointer  # the provider knows how its settings name its issuer
+
+    try:
+        stored_issuer = from_pointer(doc).issuer
+    except CatalystUsersError:
+        return None
+    if not same_issuer(stored_issuer, issuer):
+        return None
+    if str(stored_issuer).rstrip("/") != str(issuer).rstrip("/"):
+        doc["issuer"] = str(issuer).rstrip("/")
+    if client:
+        doc["client"] = client
+    return doc
+
+
 def _toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -166,6 +216,12 @@ def pointer(
         return doc
     explicit = any(v is not None for k, v in (overrides or {}).items() if k in ("server_url", "realm", "client_id"))
     explicit = explicit or any(os.environ.get(ENV_PREFIX + s) for s in ("SERVER", "REALM", "CLIENT_ID"))
+    if explicit:  # settings.json's own provider, named explicitly, keeps its system account
+        given = load(overrides, config_file)
+        client = (overrides or {}).get("client_id") or os.environ.get(f"{ENV_PREFIX}CLIENT_ID")
+        kept = system_pointer(given.issuer, client)
+        if kept is not None:
+            return kept
     stored = None if explicit else read_settings()
     if stored is not None:
         return settings_pointer(stored)

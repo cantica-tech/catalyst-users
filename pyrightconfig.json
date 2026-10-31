@@ -1,0 +1,7 @@
+{
+  "extends": "./.standards/pyright.json",
+  "include": ["."],
+  "exclude": ["**/node_modules", "**/.venv", "dist", "out"],
+  // the src layout, and the keycloak/ scripts the tests import as siblings
+  "extraPaths": ["src", "keycloak"]
+}

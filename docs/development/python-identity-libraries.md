@@ -311,9 +311,12 @@ per-object sharing becomes a requirement.
 
 ## 10. Decision for catalyst: take users and groups out of the criterion
 
-*Proposed, not yet decided or implemented. Under catalyst's rules, the change
-is a feature (a `REQ-`), because it changes how the user, role and gate rules
-behave.*
+*Decided by the owner on 2026-10-23 and implemented: catalyst-users 0.1.0 to
+0.4.0 (2026-10-23) built the facade, and catalyst's kernel removed the user and
+role registry from the criterion in 0.106.0, signing through catalyst-users
+since. §10.1 to §10.6 are the proposal as it was made; §10.7 and §10.8 record
+what was decided, and later changes are in the
+[CHANGELOG](../../CHANGELOG.md).*
 
 ### 10.1 What catalyst has today
 
@@ -411,6 +414,11 @@ documentation in `docs/users-registry.md`.
 
 ### 10.7 Decision, 2026-10-23: a command-line facade to any provider
 
+*Its system account (the `catalyst-system` service account) was replaced the
+same day by §10.8. The home moved to `~/.catalyst/users` in 0.6.0, and a person
+may log in with their password since 0.9.0 (`login --password`, through the
+password client only).*
+
 The owner decided that catalyst-users is a **command-line facade to any identity
 provider**, not a Keycloak client. Keycloak is one provider among others.
 
@@ -448,30 +456,29 @@ The owner specified how catalyst-users is set up, and decided:
 
 ## 11. What's left
 
-- **Catalyst decision (§10):** the owner accepts or rejects it. If accepted:
-  a design note and a `REQ-` covering the provider interface
-  (`local` | `oidc`), the move of user records out of the criterion, the
-  signer snapshot format, and migrating existing `users.json` records into
-  Keycloak or the `local` repository.
-- **Check the Keycloak specifics in a proof of concept:** the device flow, a
-  group mapper sending full paths, introspection from `catalyst serve`, and
-  the memory footprint.
-- **Framework:** the final pick for accounts depends on whether the product
-  is FastAPI, Flask, Django or framework-free. Flask → Flask-Security-Too;
-  Django → contrib.auth + allauth; otherwise pwdlib plus a small account
-  module of our own.
-- **PyJWT advisory boundaries:** confirm the exact fixed versions from
-  PyJWT's GitHub security advisories before pinning.
-- **UserHarbor:** check again at 1.0, and see whether it adds groups and
-  documents its token format and hashing algorithm.
-- **fastapi-users successor:** check whether the announced toolkit has
-  shipped.
-- **Record signatures:** decide whether "signature" includes signing
-  approvals (§6, last subsection). If so, design key custody (per-user keys
-  vs. Sigstore).
-- **Proof of concept:** a Casbin model for users → groups → groups → roles
-  with domains, plus tests that grant and deny access through each level of
-  nesting.
+Settled on 2026-10-23, the date of the decisions in §10.7 and §10.8, or since:
+
+- **Catalyst decision (§10):** accepted. The provider interface is the facade
+  of registered providers (`keycloak`, and `static` for tests only); there is
+  no `local` provider. User records left the criterion with kernel 0.106.0,
+  which refuses `catalyst user …` and `catalyst role …` and points to
+  catalyst-users. The signer is recorded by issuer and subject with a name
+  snapshot (`id-SIGN-000001`).
+- **Keycloak proof of concept:** done. The integration tests run the device
+  flow, the full-path group mapper and introspection against the pinned
+  Keycloak, in CI.
+- **Framework:** no account library is needed. The people live in the
+  provider; a FastAPI service uses `catalyst_users.fastapi_auth`.
+- **PyJWT advisories, UserHarbor, fastapi-users:** moot. Tokens are checked by
+  introspection, so no JWT library is used, and the core stays
+  standard-library only.
+- **Casbin proof of concept:** not needed. Groups and roles are Keycloak's,
+  and catalyst's grants are the catalyst client's roles in the token.
+
+Still open:
+
+- **Record signatures:** whether a signature becomes cryptographic (§6, last
+  subsection; §10.5, point 3). Not decided.
 
 ## Sources
 

@@ -83,3 +83,14 @@ def test_sync_creates_a_missing_client_and_adds_missing_mappers_only():
 def test_sync_refuses_a_realm_file_with_a_secret():
     with pytest.raises(SystemExit, match="person or a secret"):
         sync_clients.declared_clients({"clients": [{"clientId": "c", "secret": "s"}]})
+
+
+def test_the_dev_realm_carries_no_test_client_and_the_test_realm_file_does():
+    """The integration tests' client lives in a test-only file (REQ-000016, env-LOCAL-000001), added by the tests."""
+    assert "catalyst-tests" not in {c["clientId"] for c in REALM["clients"]}
+    tests_realm = json.loads((KEYCLOAK / "realm-catalyst-tests.json").read_text())
+    assert tests_realm["realm"] == REALM["realm"]
+    declared = sync_clients.declared_clients(tests_realm, "realm-catalyst-tests.json")
+    assert [c["clientId"] for c in declared] == ["catalyst-tests"]
+    assert declared[0]["publicClient"] and declared[0]["directAccessGrantsEnabled"]
+    assert not declared[0]["standardFlowEnabled"]

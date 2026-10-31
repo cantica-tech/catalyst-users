@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from catalyst_users.config import Settings
+from catalyst_users.config import Settings, same_issuer
 from catalyst_users.errors import (
     LoginDeniedError,
     LoginExpiredError,
@@ -107,7 +107,7 @@ class OIDCClient:
             if not resp.ok:
                 raise ProviderUnavailableError(f"discovery failed with HTTP {resp.status}")
             meta = resp.json()
-            if meta.get("issuer") != self.settings.issuer:
+            if not same_issuer(meta.get("issuer"), self.settings.issuer):  # loopback spellings are one host
                 raise ProviderUnavailableError(
                     f"discovery returned issuer {meta.get('issuer')!r}, expected {self.settings.issuer!r}"
                 )
@@ -246,7 +246,7 @@ class OIDCClient:
 
     def accepts(self, claims: dict[str, Any]) -> bool:
         """Whether introspected claims make a token acceptable to this service."""
-        if claims.get("active") is not True or claims.get("iss") != self.settings.issuer:
+        if claims.get("active") is not True or not same_issuer(claims.get("iss"), self.settings.issuer):
             return False
         aud = claims.get("aud")
         audiences = aud if isinstance(aud, list) else [aud] if aud else []
