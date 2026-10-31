@@ -22,16 +22,41 @@ from catalyst_users.oidc import DeviceCode
 from catalyst_users.provider import Provider, Whoami, from_pointer, registered
 
 
+def _global_options(p: argparse.ArgumentParser, default: Any = None) -> None:
+    """The options every command takes, before or after it (`whoami --json` as `--json whoami`). Given after it, the
+    command's parser sets them; its default (`argparse.SUPPRESS`) keeps what was given before it."""
+    p.add_argument(
+        "--pointer",
+        default=default,
+        help="a pointer document (JSON) naming the provider and its settings (default: config.toml's)",
+    )
+    p.add_argument(
+        "--server",
+        dest="server_url",
+        default=default,
+        help="keycloak: the server URL (default: http://localhost:8080)",
+    )
+    p.add_argument("--realm", default=default, help="keycloak: the realm (default: catalyst)")
+    p.add_argument("--client-id", default=default, help="keycloak: the public client for login (default: catalyst-cli)")
+    p.add_argument(
+        "--json", action="store_true", default=False if default is None else default, help="machine-readable output"
+    )
+
+
+def _commands(p: argparse.ArgumentParser) -> list[argparse.ArgumentParser]:
+    """Every command's parser below `p`, nested ones (`users list`) included."""
+    found = []
+    for action in p._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for child in dict.fromkeys(action.choices.values()):  # an alias names the same parser
+                found += [child, *_commands(child)]
+    return found
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="catalyst-users", description=(__doc__ or "").splitlines()[0])
     p.add_argument("--version", action="version", version=f"catalyst-users {__version__}")
-    p.add_argument(
-        "--pointer", help="a pointer document (JSON) naming the provider and its settings (default: config.toml's)"
-    )
-    p.add_argument("--server", dest="server_url", help="keycloak: the server URL (default: http://localhost:8080)")
-    p.add_argument("--realm", help="keycloak: the realm (default: catalyst)")
-    p.add_argument("--client-id", help="keycloak: the public client for login (default: catalyst-cli)")
-    p.add_argument("--json", action="store_true", help="machine-readable output")
+    _global_options(p)
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("providers", help="the registered providers")
@@ -63,7 +88,9 @@ def _parser() -> argparse.ArgumentParser:
     w = sub.add_parser("whoami", help="who you are: groups and roles")
     w.add_argument("--system", action="store_true", help="the local system account instead (signs it in)")
     t = sub.add_parser("token", help="print a fresh access token (keep it secret)")
-    t.add_argument("--system", action="store_true", help="the local system account's (client credentials)")
+    t.add_argument(
+        "--system", action="store_true", help="the local system account's, signed in with the password grant"
+    )
 
     users = sub.add_parser("users", help="users").add_subparsers(dest="action", required=True)
     u = users.add_parser("list", help="list users")
@@ -133,6 +160,8 @@ def _parser() -> argparse.ArgumentParser:
     u = users.add_parser("import", help="import a catalyst users document (no passwords; never deletes)")
     u.add_argument("file", help="a catalyst users document (users.json)")
     u.add_argument("--roles", required=True, help="its roles document, to map role names to realm roles")
+    for command in _commands(p):
+        _global_options(command, argparse.SUPPRESS)
     return p
 
 
@@ -261,6 +290,13 @@ def _setup(args: argparse.Namespace) -> int:
         {"outcome": outcome.outcome, "settings": str(written), "type": kind, "username": username},
         f"{outcome.note}.\nWrote {written}.",
     )
+    if outcome.outcome == "unreachable":  # written, but nothing was checked: not a success (id-PROVIDER-000006)
+        print(
+            f"catalyst-users: error: the provider could not be checked: {written} is unchecked; "
+            "start the provider and run `catalyst-users setup --force` again",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

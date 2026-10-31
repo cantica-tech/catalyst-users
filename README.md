@@ -50,12 +50,17 @@ with `uv run python keycloak/sync_clients.py`, which adds what it lacks and chan
 On a realm imported by compose, `keycloak/set_admin.py` makes you its admin: it reads your
 username and password from the macOS keychain (the item whose service is
 `osteck@catalyst-users`, or `--service`), creates or updates you in the realm,
-and makes you the only member of `catalyst-admins`. Nothing it reads is
-written or printed:
+and makes you a member of `catalyst-admins`. The group's other members stay, and are listed; `--sole-admin` removes
+them from it (never deletes them), so you are its only member. Nothing it reads is written or printed:
 
 ```sh
-uv run python keycloak/set_admin.py --email you@example.com
+uv run python keycloak/set_admin.py --email you@example.com [--sole-admin]
 ```
+
+The realm file declares no client for tests. The integration tests' own client, `catalyst-tests` (a password grant
+for the test people), is in [keycloak/realm-catalyst-tests.json](keycloak/realm-catalyst-tests.json); the tests add
+it to the realm they run against when it lacks it, as `sync_clients.py --realm-file keycloak/realm-catalyst-tests.json`
+does.
 
 ## The command line
 
@@ -66,15 +71,16 @@ Every command goes through the configured provider ([Configuration](#configurati
 | `providers` | The registered providers, and where each comes from. |
 | `login [--password [--username NAME]]` | Device login: shows a link and a code, waits for you to approve in the browser; no password passes through catalyst-users. With `--password`: your username and password instead, the password read from standard input (one line) or asked without echo, sent only to the provider's token endpoint through its password client, never stored or shown (`id-AUTH-000007`). |
 | `whoami [--json] [--system]` | Your username, subject, issuer, groups, roles, catalyst grants and the criteria you administer; with `--system`, the local system account's. |
-| `token [--json] [--system]` | Prints a fresh access token, to pass to an API; with `--system`, the local system account's ([below](#the-local-system-account)). Keep it secret. |
+| `token [--json] [--system]` | Prints a fresh access token, to pass to an API; with `--system`, the local system account's, signed in with the password grant ([below](#the-local-system-account)). Keep it secret. |
 | `logout` | Revokes your session at Keycloak and deletes the local credentials. |
 | `users list [--search S]`, `add NAME [--email --first-name --last-name --temporary-password]`, `update NAME [--email --first-name --last-name]`, `disable NAME`, `enable NAME`, `groups NAME`, `roles NAME`, `import FILE --roles FILE` | Users. They are disabled, never deleted. `roles` lists a person's realm roles, each directly or through which groups. `update` changes only the details given; a changed email is no longer verified; the username never changes. `import` brings a catalyst `users.json` in, without passwords. |
 | `groups list`, `add PATH`, `members PATH`, `add-member PATH NAME`, `remove-member PATH NAME`, `grant-role PATH ROLE` | Nested groups. `add /a/b/c` creates any missing parents. |
 | `roles list`, `add NAME [--description D]`, `grant NAME ROLE`, `holders NAME`, `provision FILE [--login-client C]` | Realm roles. `holders` lists the groups granted a role and who holds it, directly or through which groups. `provision` writes a catalyst roles document: each role and what it may run (below). |
 | `criteria list`, `add NAME [--admin USER]`, `admins NAME`, `members NAME`, `appoint NAME USER`, `dismiss NAME USER` | Criteria, their admins and their members ([below](#criteria-and-their-admins)). `add` is the catalyst-admin's, and idempotent. `members` only lists: catalyst changes members, recording each change ([docs/membership.md](docs/membership.md)). |
 
-Global options: `--pointer FILE`, `--json`, and Keycloak's `--server`, `--realm`, `--client-id`. Exit codes:
-0 done, 1 refused or failed, 2 usage.
+Global options: `--pointer FILE`, `--json`, and Keycloak's `--server`, `--realm`, `--client-id`, before or after the
+command (`catalyst-users whoami --json` is `catalyst-users --json whoami`). Exit codes: 0 done, 1 refused or failed,
+2 usage.
 
 Directory commands act with **your own** token: Keycloak decides what your
 account may change. catalyst-users holds no admin secret.
@@ -126,7 +132,7 @@ class AcmeProvider:
 
 | The provider | Setup |
 | --- | --- |
-| not up | writes the settings from the JSON alone, unchecked |
+| not up | writes the settings from the JSON alone, unchecked, and fails (exit 1): start it and run `setup --force` |
 | up, without its realm | creates the realm from the JSON's `definition`, as the provider's server admin (asked for, used once, never stored), then the admin (email and names asked for: Keycloak signs no one in without them) in `/catalyst-admins`, and signs them in |
 | up, with its realm | signs the admin in, and nothing else |
 
@@ -237,7 +243,9 @@ A runnable example is in [examples/api.py](examples/api.py).
 
 The provider is chosen by a pointer: `--pointer FILE` (JSON) or `CATALYST_USERS_POINTER`, else
 `~/.catalyst/users/IAM/settings.json` ([setup](#setup)), else `config.toml`'s `provider` with its table, else explicit
-Keycloak settings (flags or environment). With none of them, a command asks for setup.
+Keycloak settings (flags or environment). Explicit settings win over settings.json, but when they name its own
+provider (the same issuer, a loopback host spelled `localhost`, `127.0.0.1` or `::1` alike), settings.json's system
+account is kept, and the provider is reached as they spell it. With none of them, a command asks for setup.
 
 ```json
 {
@@ -266,8 +274,10 @@ catalyst-users' home is `users/` in catalyst's: `~/.catalyst/users`, or `$CATALY
 names another. A `~/.catalyst-users` made by an earlier version is moved there once, the first time it is used,
 and a link to it left in its place, so an earlier catalyst-users (vendored by catalyst) still finds it.
 
-Keycloak builds its issuer from the host you call: use the same host
-(`localhost` or `127.0.0.1`) for the CLI and for services.
+Keycloak builds its issuer from the host you call, and refuses a token at a host other than the one that issued
+it: use the same host (`localhost` or `127.0.0.1`) for the CLI and for services. catalyst-users treats the loopback
+spellings as one provider when it matches issuers (`config.same_issuer`): settings.json's system account, discovery's
+issuer, and an introspected token's `iss`.
 
 ## Security model
 
