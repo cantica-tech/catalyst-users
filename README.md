@@ -156,6 +156,15 @@ password grant on `catalyst-admin-cli`, a public client of the realm whose only 
 carry the groups, roles, catalyst grants and API audience. Keycloak's built-in `admin-cli` would check the password
 but carries none of them. A person who is not the admin still logs in with the device grant.
 
+The password command is a program and its arguments, never a shell line: no pipes, variables or `~`. Written as a
+string, it is split by the platform's rules. On macOS and Linux they are a POSIX shell's (`shlex`): quote an argument
+with spaces in `'…'` or `"…"`, and a backslash escapes the next character. On Windows they are the ones a Windows
+program applies to its own command line, so `C:\Tools\pw.exe --account owner` keeps its backslashes: put a path with
+spaces in double quotes (`"C:\Program Files\pw\pw.exe" -a owner`); a backslash is literal except right before a
+double quote, where `\"` is a literal quote. In settings.json, `password_command` may also be a JSON list, the program
+and each argument as they are, with no quoting at all:
+`"password_command": ["C:\\Program Files\\pw\\pw.exe", "-a", "owner"]`.
+
 ## The facade, and catalyst's grants
 
 `catalyst_users.provider` is how a client such as catalyst reaches people,
