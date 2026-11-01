@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import os
 import re
 import shlex
 import subprocess
@@ -179,9 +180,69 @@ class SetupOutcome:
     note: str
 
 
+def split_command(command: str, *, windows: bool | None = None) -> list[str]:
+    """A command line split into its program and arguments by the platform's rules (BUG-000051, id-AUTH-000006).
+
+    POSIX: `shlex.split`, as a POSIX shell would (quotes group, a backslash escapes). Windows (`windows=None` means
+    "this platform"): the rules a Windows program applies to its own command line (`CommandLineToArgvW`), so
+    `C:\\Tools\\pw.exe` keeps its backslashes: whitespace separates arguments outside double quotes; a backslash is
+    literal unless backslashes run up to a double quote, where each pair gives one backslash and an odd one escapes
+    the quote; `""` inside quotes is a literal quote; the program (the first argument) takes no escapes at all.
+    An unterminated quote is a ValueError on POSIX, and closes at the end on Windows, as Windows does."""
+    if windows is None:
+        windows = os.name == "nt"
+    return _split_windows(command) if windows else shlex.split(command)
+
+
+def _split_windows(command: str) -> list[str]:
+    argv: list[str] = []
+    current: list[str] = []
+    quoted = started = False
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in " \t" and not quoted:
+            if started:
+                argv.append("".join(current))
+                current, started = [], False
+            i += 1
+            continue
+        started = True
+        if c == '"':
+            if quoted and argv and i + 1 < n and command[i + 1] == '"':
+                current.append('"')  # "" inside quotes, in an argument: one literal quote
+                i += 2
+            else:
+                quoted = not quoted
+                i += 1
+        elif c == "\\" and argv:
+            j = i
+            while j < n and command[j] == "\\":
+                j += 1
+            run = j - i
+            if j < n and command[j] == '"':
+                current.append("\\" * (run // 2))
+                if run % 2:
+                    current.append('"')
+                    j += 1
+            else:
+                current.append("\\" * run)
+            i = j
+        else:
+            current.append(c)
+            i += 1
+    if started:
+        argv.append("".join(current))
+    return argv
+
+
 def secret_from_command(command: str | list[str], what: str) -> str:
-    """The first line a command prints, run without a shell; never shown, even in an error."""
-    argv = command if isinstance(command, list) else shlex.split(command)
+    """The first line a command prints, run without a shell; never shown, even in an error. A string is split by the
+    platform's rules (`split_command`); a list is the program and its arguments as they are."""
+    try:
+        argv = command if isinstance(command, list) else split_command(command)
+    except ValueError as exc:
+        raise ProviderError(f"{what} cannot be split into a program and its arguments: {exc}") from None
     shown = argv[0] if argv else "(empty)"
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)

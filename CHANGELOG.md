@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.1 — 2026-11-01
+
+- Fixed: on Windows, a password command whose path has backslashes (`C:\Tools\pw.exe`) lost them, since the
+  command line was split by POSIX rules. `provider.split_command` splits it by the platform's rules: a POSIX
+  shell's (`shlex`, unchanged) on macOS and Linux, a Windows program's (`CommandLineToArgvW`) on Windows. A command
+  that cannot be split (an unterminated quote on POSIX) is refused as a `ProviderError` saying so, without its
+  text. The README gives the quoting rules, and settings.json's `password_command` may be a JSON list (BUG-000051,
+  `id-AUTH-000006`).
+
 ## 0.11.0 — 2026-10-31
 
 Identity coherence across loopback spellings, honest setup, global options anywhere, and a dev realm without a test
