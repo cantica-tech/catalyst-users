@@ -8,6 +8,8 @@
   "bruteForceProtected": true,
   "passwordPolicy": "length(12) and notUsername",
   "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 43200,
+  "ssoSessionMaxLifespan": 604800,
   "oauth2DeviceCodeLifespan": 600,
   "oauth2DevicePollingInterval": 5,
   "adminPermissionsEnabled": true,
