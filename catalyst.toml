@@ -1,13 +1,13 @@
 # catalyst project file: names this project's criterion ($HOME/.catalyst/projects/<project_name>/criterion). Never a path.
 project_name = "catalyst-users"
 format = "1.0-rc"
-kernel_version = "0.120.0"
+kernel_version = "0.121.0"
 module = "software-engineering"
 agent = "claude-code"
 repoed = true
 created_by = "Olivier Steck"
 created = "2026-10-22"
-updated = "2026-10-31"
+updated = "2026-11-01"
 journal_since = ""
 catalyst_repo_url = "git@github.com:cantica-tech/catalyst-users-criterion.git"
 criterion_branch = "criterion"
