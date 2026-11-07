@@ -14,3 +14,7 @@ wheels/
 .ruff_cache/
 .pytest_cache/
 .DS_Store
+
+# Deployment settings and secrets (deploy/README.md)
+deploy/.env
+deploy/secrets/

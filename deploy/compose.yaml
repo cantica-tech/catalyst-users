@@ -1,0 +1,112 @@
+# catalyst's identity service on one host: Keycloak on Postgres, provisioned for catalyst by catalyst-users.
+# Nothing here is dev mode: `keycloak start`, a database that outlives the container, loopback-bound ports
+# for the reverse proxy in front (TLS terminates there; KC_PROXY_HEADERS tells Keycloak so).
+#
+#   cp .env.example .env            # then edit: hostname, usernames, email
+#   ./make-secrets.sh                # or write deploy/secrets/* yourself (0600, one line each)
+#   docker compose up -d --wait keycloak
+#   docker compose run --rm provision
+#
+# Secrets are files under ./secrets (never in git, never in this file). Keycloak reads its two from the
+# environment at start, so the compose file hands them over from the files through `_FILE`-less variables:
+# Keycloak has no `_FILE` convention, hence the `entrypoint` indirection below.
+
+name: catalyst-identity
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/kc_db_password
+    secrets: [kc_db_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.4.0}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The realm is not imported: `provision` creates it from keycloak/realm-catalyst.json through
+    # `catalyst-users setup`, which also creates the admin and the criteria. An import would leave a realm
+    # setup only signs in to, with no admin to sign in as.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export KC_DB_PASSWORD="$$(cat /run/secrets/kc_db_password)"
+        export KC_BOOTSTRAP_ADMIN_PASSWORD="$$(cat /run/secrets/kc_admin_password)"
+        exec /opt/keycloak/bin/kc.sh start
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HOSTNAME: ${KC_HOSTNAME:?the public URL, e.g. https://id.example.com}
+      KC_HTTP_ENABLED: "true"            # plain HTTP to the proxy only; the ports below bind to loopback
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+    secrets: [kc_db_password, kc_admin_password]
+    ports:
+      - "127.0.0.1:${KC_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${KC_MANAGEMENT_PORT:-9000}:9000"
+    healthcheck:
+      # The image carries no curl; bash's /dev/tcp reaches the management port.
+      test:
+        - CMD-SHELL
+        - >
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": *"UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  provision:
+    # One shot: `docker compose run --rm provision`. Creates the realm from the definition, the admin, the
+    # criteria, catalyst's roles and grants; re-runs sign in and add what is missing.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: [provision]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    # catalyst-users refuses plain HTTP except on loopback (its `check_url`), so provision shares Keycloak's
+    # network namespace and reaches it at 127.0.0.1, inside the container, never across the network.
+    network_mode: service:keycloak
+    environment:
+      KC_URL: http://127.0.0.1:8080
+      KC_PUBLIC_URL: ${KC_HOSTNAME}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      CATALYST_ADMIN: ${CATALYST_ADMIN:?the catalyst admin's username}
+      CATALYST_ADMIN_EMAIL: ${CATALYST_ADMIN_EMAIL:?the catalyst admin's email}
+      CATALYST_ADMIN_FIRST_NAME: ${CATALYST_ADMIN_FIRST_NAME:?}
+      CATALYST_ADMIN_LAST_NAME: ${CATALYST_ADMIN_LAST_NAME:?}
+      CATALYST_CRITERIA: ${CATALYST_CRITERIA:-}
+      CATALYST_HOME: /home/provision/.catalyst
+    secrets: [kc_admin_password, catalyst_admin_password]
+    volumes:
+      # catalyst-users' settings (no secret in them) and the admin's session, so a re-run is a sign-in
+      - provision-home:/home/provision/.catalyst
+
+secrets:
+  kc_db_password:
+    file: ./secrets/kc_db_password
+  kc_admin_password:
+    file: ./secrets/kc_admin_password
+  catalyst_admin_password:
+    file: ./secrets/catalyst_admin_password
+
+volumes:
+  postgres-data:
+  provision-home:
