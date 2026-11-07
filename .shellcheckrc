@@ -1,0 +1,3 @@
+# cantica-tech shell standard (ShellCheck).
+enable=require-variable-braces
+external-sources=true

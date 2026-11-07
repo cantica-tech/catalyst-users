@@ -9,12 +9,12 @@ mkdir -p secrets && chmod 700 secrets
 gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
 
 for name in kc_db_password kc_admin_password catalyst_admin_password; do
-  f="secrets/$name"
-  if [ -e "$f" ]; then
-    echo "kept    $f"
+  f="secrets/${name}"
+  if [ -e "${f}" ]; then
+    echo "kept    ${f}"
   else
-    (umask 077 && gen > "$f")
-    echo "written $f"
+    (umask 077 && gen > "${f}")
+    echo "written ${f}"
   fi
 done
 
